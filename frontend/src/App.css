@@ -1,0 +1,863 @@
+/* ==========================================================================
+   APP CONTAINER & THEMING
+   ========================================================================== */
+.auth-page-container {
+  min-height: 100vh;
+  width: 100vw;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 24px;
+  position: relative;
+  overflow: hidden;
+  transition: var(--theme-transition);
+}
+
+.auth-page-container.theme-light {
+  background: var(--day-bg-gradient);
+  color: var(--day-text-main);
+}
+
+.auth-page-container.theme-dark {
+  background: var(--night-bg-gradient);
+  color: var(--night-text-main);
+}
+
+/* Ambient glow blobs */
+.ambient-blur {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+  z-index: 0;
+  transition: var(--theme-transition);
+}
+
+.theme-light .ambient-1 {
+  width: 450px;
+  height: 450px;
+  background: rgba(220, 235, 240, 0.6);
+  top: -100px;
+  left: 15%;
+}
+
+.theme-light .ambient-2 {
+  width: 400px;
+  height: 400px;
+  background: rgba(180, 215, 225, 0.5);
+  bottom: -80px;
+  right: 15%;
+}
+
+.theme-dark .ambient-1 {
+  width: 450px;
+  height: 450px;
+  background: rgba(20, 45, 60, 0.4);
+  top: -100px;
+  left: 15%;
+}
+
+.theme-dark .ambient-2 {
+  width: 400px;
+  height: 400px;
+  background: rgba(15, 80, 85, 0.25);
+  bottom: -80px;
+  right: 15%;
+}
+
+/* ==========================================================================
+   AUTH MAIN CARD (DUAL PANEL)
+   ========================================================================== */
+.auth-card {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  width: 100%;
+  max-width: 960px;
+  min-height: 580px;
+  border-radius: 28px;
+  overflow: hidden;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: var(--theme-transition);
+}
+
+.theme-light .auth-card {
+  background: var(--day-card-bg);
+  border: 1px solid var(--day-card-border);
+  box-shadow: var(--day-card-shadow);
+}
+
+.theme-dark .auth-card {
+  background: var(--night-card-bg);
+  border: 1px solid var(--night-card-border);
+  box-shadow: var(--night-card-shadow);
+}
+
+/* ==========================================================================
+   LEFT PANEL: MOUNTAIN LANDSCAPE
+   ========================================================================== */
+.landscape-panel {
+  flex: 1.15;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 40px;
+  transition: var(--theme-transition);
+}
+
+.landscape-panel.day {
+  background: linear-gradient(180deg, #c5d8dc 0%, #9ab5be 60%, #43636c 100%);
+}
+
+.landscape-panel.night {
+  background: linear-gradient(180deg, #101923 0%, #0c141c 55%, #05080c 100%);
+}
+
+/* Mountains SVG */
+.mountains-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Celestial Body (Sun or Moon) */
+.celestial-body {
+  position: absolute;
+  top: 48px;
+  left: 75px;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  z-index: 3;
+  transition: var(--theme-transition);
+}
+
+.celestial-body.sun {
+  background: radial-gradient(circle, #fff7c2 20%, #fbd361 70%, #f59e0b 100%);
+  box-shadow: 0 0 45px rgba(251, 191, 36, 0.8), 0 0 90px rgba(251, 191, 36, 0.4);
+}
+
+.sun-glow {
+  position: absolute;
+  inset: -15px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(253, 230, 138, 0.4) 0%, transparent 70%);
+  animation: pulse-sun 4s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-sun {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(1.15); opacity: 0.9; }
+}
+
+.celestial-body.moon {
+  background: radial-gradient(circle, #f3f6f8 20%, #d8e2e8 65%, #a6b7c2 100%);
+  box-shadow: 0 0 35px rgba(226, 236, 240, 0.6), 0 0 70px rgba(186, 205, 218, 0.25);
+}
+
+.moon-details {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.crater {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(140, 160, 175, 0.35);
+  box-shadow: inset 1px 1px 2px rgba(90, 110, 125, 0.5);
+}
+
+.crater.c1 { width: 14px; height: 14px; top: 18px; left: 16px; }
+.crater.c2 { width: 9px; height: 9px; top: 38px; left: 32px; }
+.crater.c3 { width: 11px; height: 11px; top: 22px; left: 42px; }
+
+/* Stars in Night Mode */
+.stars-container {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+}
+
+.star {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 0 4px #ffffff;
+  animation: twinkle 3s ease-in-out infinite alternate;
+}
+
+.star.s1 { top: 25px; left: 190px; animation-delay: 0.3s; }
+.star.s2 { top: 75px; left: 240px; animation-delay: 1.1s; }
+.star.s3 { top: 50px; left: 320px; animation-delay: 0.7s; }
+.star.s4 { top: 120px; left: 140px; animation-delay: 1.8s; }
+.star.s5 { top: 110px; left: 280px; animation-delay: 0.5s; }
+.star.s6 { top: 40px; left: 40px; animation-delay: 1.4s; }
+.star.s7 { top: 140px; left: 60px; animation-delay: 2.1s; }
+.star.s8 { top: 90px; left: 350px; animation-delay: 0.9s; }
+
+@keyframes twinkle {
+  0% { opacity: 0.2; transform: scale(0.8); }
+  100% { opacity: 1; transform: scale(1.3); }
+}
+
+/* Landscape Content Text */
+.landscape-content {
+  position: relative;
+  z-index: 5;
+  color: #ffffff;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.landscape-title {
+  font-family: var(--font-heading);
+  font-size: 26px;
+  font-weight: 700;
+  margin-bottom: 10px;
+  letter-spacing: -0.02em;
+}
+
+.landscape-desc {
+  font-size: 13.5px;
+  line-height: 1.6;
+  opacity: 0.9;
+  max-width: 320px;
+}
+
+/* ==========================================================================
+   RIGHT PANEL: FORM & MASCOT
+   ========================================================================== */
+.form-panel {
+  flex: 1.05;
+  padding: 44px 48px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+  z-index: 4;
+}
+
+/* Top control button */
+.panel-header-controls {
+  position: absolute;
+  top: 24px;
+  right: 28px;
+  z-index: 20;
+}
+
+.theme-toggle-btn {
+  background: rgba(125, 145, 160, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 7px 14px;
+  border-radius: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 500;
+  transition: all 0.25s ease;
+  color: inherit;
+  backdrop-filter: blur(10px);
+}
+
+.theme-toggle-btn:hover {
+  background: rgba(125, 145, 160, 0.25);
+  transform: translateY(-1px);
+}
+
+.theme-icon.sun-icon { color: #f59e0b; }
+.theme-icon.moon-icon { color: #38bdf8; }
+
+/* Mascot Section */
+.mascot-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 24px;
+  position: relative;
+}
+
+.form-title {
+  font-family: var(--font-heading);
+  font-size: 28px;
+  font-weight: 700;
+  margin-top: 10px;
+  letter-spacing: -0.02em;
+  text-align: center;
+}
+
+/* ==========================================================================
+   OWL MASCOT & SPOTLIGHT BEAM (CHÙM SÁNG ĐÈN PIN RỌI CÚ)
+   ========================================================================== */
+.owl-wrapper {
+  width: 72px;
+  height: 80px;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: all 0.4s ease;
+}
+
+.owl-svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.25));
+  transition: transform 0.3s ease;
+}
+
+.owl-svg.surprised {
+  transform: scale(1.06) translateY(-2px);
+}
+
+.owl-pupil {
+  transition: all 0.2s ease;
+}
+
+/* Glowing Spotlight Halo around Owl when illuminated */
+.owl-spotlight-halo {
+  position: absolute;
+  inset: -12px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(253, 224, 71, 0.4) 0%, rgba(253, 224, 71, 0.1) 60%, transparent 80%);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+
+.owl-wrapper.illuminated .owl-spotlight-halo {
+  opacity: 1;
+}
+
+.owl-wrapper.illuminated .owl-svg {
+  filter: drop-shadow(0 0 16px rgba(254, 240, 138, 0.7));
+}
+
+/* 
+   THE DRAMATIC FLASHLIGHT BEAM (Ảnh 2)
+   Tia sáng đèn pin rọi chéo từ ô mật khẩu lên con cú!
+*/
+/* 
+   THE DYNAMIC FLASHLIGHT BEAM (Bật/Tắt và di chuyển soi theo chuột)
+*/
+.dynamic-flashlight-svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 15;
+  overflow: visible;
+  transition: opacity 0.25s ease;
+}
+
+/* ==========================================================================
+   FORM INPUTS & CONTROLS
+   ========================================================================== */
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+
+.auth-form.mode-register {
+  gap: 11px;
+}
+
+.auth-form.mode-register .input-field-wrapper {
+  height: 48px;
+}
+
+.auth-form.mode-register .submit-btn {
+  height: 48px;
+  margin-top: 4px;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.input-field-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 14px;
+  padding: 0 16px;
+  height: 52px;
+  transition: all 0.25s ease;
+}
+
+.theme-light .input-field-wrapper {
+  background: var(--day-input-bg);
+  border: 1px solid var(--day-input-border);
+}
+
+.theme-dark .input-field-wrapper {
+  background: var(--night-input-bg);
+  border: 1px solid var(--night-input-border);
+}
+
+.input-field-wrapper:focus-within {
+  border-color: #14b8a6;
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.2);
+}
+
+.input-field-wrapper.has-error {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+}
+
+.input-icon {
+  margin-right: 12px;
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+
+.input-field-wrapper input {
+  width: 100%;
+  height: 100%;
+  background: transparent !important;
+  border: none;
+  outline: none;
+  font-family: inherit;
+  font-size: 14.5px;
+  color: inherit;
+}
+
+/* Triệt tiêu triệt để hộp trắng autofill khó chịu của Chrome/Edge */
+.input-field-wrapper input:-webkit-autofill,
+.input-field-wrapper input:-webkit-autofill:hover, 
+.input-field-wrapper input:-webkit-autofill:focus,
+.input-field-wrapper input:-webkit-autofill:active {
+  -webkit-background-clip: text !important;
+  transition: background-color 50000s ease-in-out 0s !important;
+}
+
+.theme-dark .input-field-wrapper input:-webkit-autofill,
+.theme-dark .input-field-wrapper input:-webkit-autofill:hover, 
+.theme-dark .input-field-wrapper input:-webkit-autofill:focus,
+.theme-dark .input-field-wrapper input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--night-input-text) !important;
+  box-shadow: 0 0 0 1000px rgba(10, 16, 21, 0.95) inset !important;
+}
+
+.theme-light .input-field-wrapper input:-webkit-autofill,
+.theme-light .input-field-wrapper input:-webkit-autofill:hover, 
+.theme-light .input-field-wrapper input:-webkit-autofill:focus,
+.theme-light .input-field-wrapper input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--day-input-text) !important;
+  box-shadow: 0 0 0 1000px rgba(255, 255, 255, 0.95) inset !important;
+}
+
+.theme-light input {
+  color: var(--day-input-text);
+}
+
+.theme-dark input {
+  color: var(--night-input-text);
+}
+
+.input-field-wrapper input::placeholder {
+  opacity: 0.45;
+}
+
+/* Flashlight button inside password field */
+.flashlight-toggle-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  color: inherit;
+  opacity: 0.6;
+  transition: all 0.2s ease;
+}
+
+.flashlight-toggle-btn:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.flashlight-toggle-btn.active {
+  opacity: 1;
+  color: #fbbf24;
+  filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.8));
+}
+
+.field-error-text {
+  font-size: 12px;
+  color: #ef4444;
+  padding-left: 6px;
+}
+
+/* Forgot password link row */
+.forgot-password-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -6px;
+}
+
+.forgot-password-link {
+  background: transparent;
+  border: none;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.75;
+  transition: opacity 0.2s;
+  text-decoration: none;
+}
+
+.forgot-password-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+/* Submit Button */
+.submit-btn {
+  height: 50px;
+  border-radius: 14px;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-heading);
+  font-size: 15.5px;
+  font-weight: 600;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-top: 6px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.theme-light .submit-btn {
+  background: var(--day-btn-primary);
+  box-shadow: var(--day-btn-shadow);
+}
+
+.theme-dark .submit-btn {
+  background: var(--night-btn-primary);
+  box-shadow: var(--night-btn-shadow);
+}
+
+.submit-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  filter: brightness(1.08);
+}
+
+.submit-btn:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.spin-icon {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  100% { transform: rotate(360deg); }
+}
+
+/* Switch Mode Footer */
+.switch-mode-footer {
+  text-align: center;
+  margin-top: 10px;
+  font-size: 13.5px;
+  opacity: 0.85;
+}
+
+.switch-mode-btn {
+  background: transparent;
+  border: none;
+  font-weight: 600;
+  color: #14b8a6;
+  cursor: pointer;
+  margin-left: 4px;
+  font-size: 13.5px;
+  text-decoration: underline;
+}
+
+.switch-mode-btn:hover {
+  filter: brightness(1.2);
+}
+
+/* ==========================================================================
+   ALERTS & LOGGED IN VIEW
+   ========================================================================== */
+.alert-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.error-alert {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.success-alert {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #10b981;
+}
+
+.retry-badge {
+  font-weight: 700;
+  margin-left: auto;
+}
+
+.logged-in-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding: 16px 0;
+  width: 100%;
+}
+
+.logged-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(20, 184, 166, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #14b8a6;
+  box-shadow: 0 0 25px rgba(20, 184, 166, 0.25);
+}
+
+.logged-username {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.role-badge-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.role-label {
+  opacity: 0.7;
+}
+
+.role-badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.role-user {
+  background: rgba(59, 130, 246, 0.18);
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  color: #60a5fa;
+}
+
+.role-admin {
+  background: rgba(245, 158, 11, 0.18);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+}
+
+.auth-description {
+  font-size: 12px;
+  opacity: 0.75;
+  margin: 0;
+  max-width: 380px;
+}
+
+.authorization-test-box {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+}
+
+.theme-light .authorization-test-box {
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+.test-box-title {
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0.8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.auth-test-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.auth-test-btn {
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.test-user-btn {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: #3b82f6;
+}
+
+.test-user-btn:hover {
+  background: rgba(59, 130, 246, 0.25);
+}
+
+.test-admin-btn {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+}
+
+.test-admin-btn:hover {
+  background: rgba(245, 158, 11, 0.25);
+}
+
+.auth-test-result {
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 11px;
+}
+
+.result-success {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #10b981;
+}
+
+.result-error {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 11px;
+}
+
+.result-status-badge {
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.result-json {
+  margin: 0;
+  font-family: monospace;
+  font-size: 11px;
+  max-height: 120px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.logout-actions-group {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.logout-btn {
+  background: rgba(239, 68, 68, 0.85) !important;
+  box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3) !important;
+  padding: 10px 20px;
+  height: auto;
+}
+
+.logout-all-btn {
+  background: transparent;
+  border: none;
+  font-size: 12px;
+  opacity: 0.65;
+  cursor: pointer;
+  text-decoration: underline;
+  color: inherit;
+  transition: opacity 0.2s;
+}
+
+.logout-all-btn:hover {
+  opacity: 1;
+}
+
+/* ==========================================================================
+   RESPONSIVE DESIGN (MOBILE & TABLET)
+   ========================================================================== */
+@media (max-width: 820px) {
+  .auth-card {
+    flex-direction: column;
+    max-width: 460px;
+  }
+
+  .landscape-panel {
+    min-height: 220px;
+    padding: 24px;
+  }
+
+  .landscape-desc {
+    display: none;
+  }
+
+  .form-panel {
+    padding: 32px 28px;
+  }
+
+  .flashlight-beam-cone {
+    display: none; /* Hide diagonal beam on narrow mobile for clean view */
+  }
+}

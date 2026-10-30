@@ -1,0 +1,30 @@
+/* Auth page design tokens - these complement the main styles/index.css */
+:root {
+  /* Day Mode Palette */
+  --day-bg-gradient: radial-gradient(circle at 50% 10%, #d8e5e8 0%, #bacdd4 45%, #9cb4be 100%);
+  --day-card-bg: rgba(238, 245, 247, 0.85);
+  --day-card-border: rgba(255, 255, 255, 0.6);
+  --day-card-shadow: 0 25px 50px -12px rgba(45, 75, 85, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.5) inset;
+  --day-text-main: #1f363d;
+  --day-text-muted: #52717c;
+  --day-input-bg: rgba(255, 255, 255, 0.55);
+  --day-input-border: rgba(180, 205, 215, 0.8);
+  --day-input-text: #172d34;
+  --day-btn-primary: linear-gradient(135deg, #1d7874 0%, #0d5c58 100%);
+  --day-btn-shadow: 0 8px 20px rgba(29, 120, 116, 0.35);
+
+  /* Night Mode Palette */
+  --night-bg-gradient: radial-gradient(circle at 50% 10%, #151d26 0%, #0c1218 50%, #070a0e 100%);
+  --night-card-bg: rgba(18, 26, 33, 0.82);
+  --night-card-border: rgba(45, 62, 77, 0.65);
+  --night-card-shadow: 0 25px 50px -10px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  --night-text-main: #e2ecf0;
+  --night-text-muted: #7995a3;
+  --night-input-bg: rgba(10, 16, 21, 0.6);
+  --night-input-border: rgba(45, 62, 77, 0.75);
+  --night-input-text: #f0f7f9;
+  --night-btn-primary: linear-gradient(135deg, #17938b 0%, #0c6963 100%);
+  --night-btn-shadow: 0 8px 24px rgba(23, 147, 139, 0.4);
+
+  --theme-transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
