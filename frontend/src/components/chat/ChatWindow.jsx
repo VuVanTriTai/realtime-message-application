@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Users, Info, ArrowLeft, Loader2, Sparkles } from 'lucide-react';
 import Avatar from '../common/Avatar';
 import MessageBubble from './MessageBubble';
@@ -17,6 +17,9 @@ export default function ChatWindow({
   onMessageSent,
   onTypingEvent,  // [FIX] callback từ ChatPage để cập nhật typingStates
   onPresenceEvent, // [FIX] callback từ ChatPage để cập nhật isOnline
+  onToggleDetailPanel,
+  isDetailOpen = false,
+  jumpMessageId = null,
 }) {
   const { currentUser } = useAuth();
   const { subscribeToConversation, sendMessage: wsSendMessage, sendTyping: wsSendTyping, sendRead: wsSendRead } = useWebSocket();
@@ -26,6 +29,7 @@ export default function ChatWindow({
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
 
   const messagesEndRef = useRef(null);
   const messageListRef = useRef(null);
@@ -47,6 +51,11 @@ export default function ChatWindow({
     ? (conversation?.name || conversation?.title || 'Nhom chat')
     : (conversation?.otherUserName || conversation?.title || conversation?.name || 'Cuoc tro chuyen');
 
+  // [FIX ORDER] Helper: sort messages array by createdAt asc
+  // Dùng ở mọi nơi setMessages để đảm bảo thứ tự nhất quán giữa sender/receiver
+  const sortByTime = (arr) =>
+    [...arr].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+
   // Load initial history
   const loadHistory = useCallback(async () => {
     if (!conversation?.id) return;
@@ -55,7 +64,7 @@ export default function ChatWindow({
       const data = await messageApi.getHistory(conversation.id);
       // Backend returns list of messages (or pagination wrapper)
       const msgList = Array.isArray(data) ? data : (data.content || []);
-      setMessages(msgList);
+      setMessages(sortByTime(msgList));
       
       if (msgList.length > 0) {
         setCursor(msgList[0].id); // oldest message id for cursor pagination
@@ -88,7 +97,8 @@ export default function ChatWindow({
       const data = await messageApi.getHistory(conversation.id, cursor);
       const olderList = Array.isArray(data) ? data : (data.content || []);
       if (olderList.length > 0) {
-        setMessages((prev) => [...olderList, ...prev]);
+        // [FIX ORDER] Merge và sort toàn bộ để tránh duplicates và sai thứ tự
+        setMessages((prev) => sortByTime([...olderList, ...prev]));
         setCursor(olderList[0].id);
         setHasMore(olderList.length >= 30);
       } else {
@@ -129,9 +139,13 @@ export default function ChatWindow({
           if (index !== -1) {
             const updated = [...prev];
             updated[index] = newMsg;
-            return updated;
+            // [FIX ORDER] Re-sort sau khi replace optimistic message bằng server message
+            // vì server createdAt có thể khác local createdAt của optimistic message
+            return sortByTime(updated);
           }
-          return [...prev, newMsg];
+          // [FIX ORDER] Sort khi append tin mới để receiver luôn thấy đúng thứ tự
+          // (receiver có thể nhận TEXT trước IMAGE do IMAGE phải chờ Cloudinary upload)
+          return sortByTime([...prev, newMsg]);
         });
 
         // Auto mark read if we are looking at this conversation
@@ -182,9 +196,80 @@ export default function ChatWindow({
     }
   }, [loading, messages]);
 
+  // Scroll to original message when clicking reply quote
+  const handleScrollToMessage = useCallback((msgId) => {
+    if (!msgId) return;
+    const el = document.getElementById(`msg-${msgId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('message-highlight');
+      setTimeout(() => el.classList.remove('message-highlight'), 1600);
+    }
+  }, []);
+
+  // Jump to message when triggered from search panel
+  useEffect(() => {
+    if (jumpMessageId) {
+      handleScrollToMessage(jumpMessageId);
+    }
+  }, [jumpMessageId, handleScrollToMessage]);
+
+  // Set message to reply to
+  const handleReply = useCallback((msg) => {
+    if (!msg) return;
+    let contentPreview = msg.content || '';
+    if (msg.type === 'IMAGE') contentPreview = '[Hình ảnh]';
+    else if (msg.type === 'FILE') contentPreview = `[Tệp tin] ${msg.fileName || ''}`;
+    else if (contentPreview.length > 80) contentPreview = contentPreview.substring(0, 80) + '…';
+
+    setReplyingTo({
+      id: msg.id,
+      senderUsername: msg.sender?.displayName || msg.sender?.username || msg.senderName || 'Người dùng',
+      contentPreview,
+    });
+  }, []);
+
   // Send message handler (WS first, fallback to REST)
-  const handleSendMessage = async (content) => {
-    const tempId = `temp_${Date.now()}`;
+  const handleSendMessage = async (inputPayload) => {
+    const isObj = typeof inputPayload === 'object' && inputPayload !== null;
+    const content = isObj ? inputPayload.content : inputPayload;
+    const type = isObj ? (inputPayload.type || 'TEXT') : 'TEXT';
+    const replyToId = isObj ? inputPayload.replyToId : null;
+    const mediaUrl = isObj ? inputPayload.mediaUrl : null;
+    const mediaType = isObj ? inputPayload.mediaType : null;
+    const fileName = isObj ? inputPayload.fileName : null;
+    const fileSize = isObj ? inputPayload.fileSize : null;
+    const thumbUrl = isObj ? inputPayload.thumbUrl : null;
+
+    // [FIX] Thêm random suffix để tránh collision khi gửi nhiều tin cùng ms
+    const tempId = (isObj && inputPayload.clientMessageId)
+      ? inputPayload.clientMessageId
+      : `temp_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+    // Construct reply preview for optimistic message
+    let replyPreview = null;
+    if (replyToId && replyingTo && replyingTo.id === replyToId) {
+      replyPreview = {
+        id: replyingTo.id,
+        senderUsername: replyingTo.senderUsername,
+        contentPreview: replyingTo.contentPreview,
+      };
+    } else if (replyToId) {
+      const found = messages.find((m) => m.id === replyToId);
+      if (found) {
+        replyPreview = {
+          id: found.id,
+          senderUsername: found.sender?.displayName || found.sender?.username || found.senderName || 'Người dùng',
+          contentPreview:
+            found.type === 'IMAGE'
+              ? '[Hình ảnh]'
+              : found.type === 'FILE'
+              ? `[Tệp tin] ${found.fileName || ''}`
+              : found.content,
+        };
+      }
+    }
+
     const optimisticMessage = {
       id: tempId,
       conversationId: conversation.id,
@@ -196,9 +281,15 @@ export default function ChatWindow({
       },
       senderId: currentUser.id, // keep for backward compat
       content,
-      type: 'TEXT',
+      type,
       status: 'SENDING',
       createdAt: new Date().toISOString(),
+      replyTo: replyPreview,
+      mediaUrl,
+      mediaType,
+      fileName,
+      fileSize,
+      thumbUrl,
     };
 
     setMessages((prev) => [...prev, optimisticMessage]);
@@ -206,13 +297,26 @@ export default function ChatWindow({
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, 50);
 
+    const fullPayload = {
+      conversationId: conversation.id,
+      content,
+      type,
+      replyToId,
+      mediaUrl,
+      mediaType,
+      fileName,
+      fileSize,
+      thumbUrl,
+      clientMessageId: tempId,
+    };
+
     try {
       // Send via WebSocket STOMP
-      wsSendMessage(conversation.id, content, 'TEXT', tempId);
+      wsSendMessage(fullPayload);
     } catch (wsErr) {
       console.warn('WS send failed, using REST fallback:', wsErr);
       try {
-        const saved = await messageApi.sendMessage(conversation.id, content, 'TEXT', tempId);
+        const saved = await messageApi.sendMessage(fullPayload);
         setMessages((prev) => prev.map((m) => (m.id === tempId ? saved : m)));
       } catch (restErr) {
         console.error('All send mechanisms failed:', restErr);
@@ -243,10 +347,14 @@ export default function ChatWindow({
     try {
       await messageApi.deleteMessage(msgId);
       setMessages((prev) =>
-        prev.map((m) => (m.id === msgId ? { ...m, deleted: true } : m))
+        prev.map((m) =>
+          m.id === msgId
+            ? { ...m, deleted: true, isDeleted: true, content: null, mediaUrl: null }
+            : m
+        )
       );
     } catch (err) {
-      alert('Không thể thu hồi tin nhắn: ' + err.message);
+      alert('Không thể thu hồi tin nhắn: ' + (err.message || 'Đã có lỗi xảy ra'));
     }
   };
 
@@ -298,16 +406,14 @@ export default function ChatWindow({
         </div>
 
         <div className="chat-header-right">
-          {isGroup && (
-            <button
-              type="button"
-              className="header-tool-btn"
-              onClick={onOpenMembersModal}
-              title="Thành viên nhóm"
-            >
-              <Users size={19} />
-            </button>
-          )}
+          <button
+            type="button"
+            className={`header-tool-btn detail-toggle-btn ${isDetailOpen ? 'active' : ''}`}
+            onClick={onToggleDetailPanel}
+            title={isDetailOpen ? 'Đóng thông tin hội thoại' : 'Mở thông tin hội thoại'}
+          >
+            <Info size={20} />
+          </button>
         </div>
       </div>
 
@@ -346,17 +452,26 @@ export default function ChatWindow({
             <p>Gửi tin nhắn đầu tiên để bắt đầu cuộc trò chuyện tuyệt vời này!</p>
           </div>
         ) : (
-          messages.map((msg) => (
-            <ErrorBoundary key={msg.id}>
-              <MessageBubble
-                message={msg}
-                isOwn={msg.sender?.id === currentUser?.id || msg.senderId === currentUser?.id}
-                showSender={isGroup}
-                onEdit={handleEditMessage}
-                onDelete={handleDeleteMessage}
-              />
-            </ErrorBoundary>
-          ))
+          // State luôn được sort theo createdAt (xem sortByTime ở trên), render trực tiếp
+          messages.map((msg) => {
+            const myId = currentUser?.id != null ? Number(currentUser.id) : null;
+            const senderId = msg.sender?.id != null ? Number(msg.sender.id) : (msg.senderId != null ? Number(msg.senderId) : null);
+            const isOwnMsg = myId != null && senderId != null && myId === senderId;
+
+            return (
+              <ErrorBoundary key={msg.id}>
+                <MessageBubble
+                  message={msg}
+                  isOwn={isOwnMsg}
+                  showSender={isGroup}
+                  onEdit={handleEditMessage}
+                  onDelete={handleDeleteMessage}
+                  onReply={handleReply}
+                  onScrollToMessage={handleScrollToMessage}
+                />
+              </ErrorBoundary>
+            );
+          })
         )}
 
         <div ref={messagesEndRef} />
@@ -366,6 +481,8 @@ export default function ChatWindow({
       <MessageInput
         onSendMessage={handleSendMessage}
         onTyping={handleTyping}
+        replyingTo={replyingTo}
+        onCancelReply={() => setReplyingTo(null)}
       />
     </div>
   );

@@ -7,6 +7,7 @@ import com.project.realtime._messaging_application.modules.Auth.dto.ChangePasswo
 import com.project.realtime._messaging_application.modules.Auth.dto.LoginRequest;
 import com.project.realtime._messaging_application.modules.Auth.dto.RegisterRequest;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
+import com.project.realtime._messaging_application.modules.User.dto.UserProfileResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -110,12 +111,6 @@ public class AuthController {
             return ResponseEntity.status(401).body(Map.of("message", "Unauthorized"));
         }
         User user = authService.getUserByUsername(connectedUser.getName());
-        return ResponseEntity.ok(Map.of(
-                "id", user.getId(),
-                "username", user.getUsername(),
-                "email", user.getEmail(),
-                "role", user.getRole().name(),
-                "status", user.getStatus().name()
-        ));
+        return ResponseEntity.ok(UserProfileResponse.fromEntity(user));
     }
 }

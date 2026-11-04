@@ -3,8 +3,11 @@ import ConversationList from './ConversationList';
 import ChatWindow from './ChatWindow';
 import CreateChatModal from './CreateChatModal';
 import GroupMembersModal from './GroupMembersModal';
+import GroupDetailPanel from './GroupDetailPanel';
 import { conversationApi } from '../../api/conversationApi';
 import { useWebSocket } from '../../context/WebSocketContext';
+import { useAuth } from '../../context/AuthContext';
+import { useNotification } from '../../hooks/useNotification';
 import { MessageSquareDashed } from 'lucide-react';
 import ErrorBoundary from '../common/ErrorBoundary';
 
@@ -13,9 +16,17 @@ export default function ChatPage({ activeConv, setActiveConv }) {
   const [loading, setLoading] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
+  const [isDetailPanelOpen, setIsDetailPanelOpen] = useState(false);
+  const [jumpMessageId, setJumpMessageId] = useState(null);
   // { [convId]: string[] } — danh sách tên người đang typing trong mỗi conversation
   const [typingStates, setTypingStates] = useState({});
   const { subscribeToConversation } = useWebSocket();
+  const { currentUser } = useAuth();
+  const { showNotification } = useNotification();
+
+  // Ref để dùng trong WS callbacks (tránh stale closure)
+  const conversationsRef = useRef([]);
+  useEffect(() => { conversationsRef.current = conversations; }, [conversations]);
 
   // Dùng ref để tránh stale closures trong subscriptions
   const activeConvRef = useRef(activeConv);
@@ -84,6 +95,19 @@ export default function ChatPage({ activeConv, setActiveConv }) {
 
   // When a message is sent or received, update the conversation item in list
   const handleMessageUpdated = useCallback((msg) => {
+    // [NOTIFICATION] Gọi NGOÀI setConversations — side effect không được phép trong updater function
+    // React có thể gọi updater nhiều lần (StrictMode) hoặc bỏ qua side effects bên trong
+    const currentConv = conversationsRef.current.find((c) => c.id === msg.conversationId);
+    const isFromOther = msg.sender?.id !== currentUser?.id;
+    const isNotActiveConv = activeConvRef.current?.id !== msg.conversationId;
+
+    if (currentConv && isFromOther && (document.hidden || isNotActiveConv)) {
+      showNotification(msg, currentConv, () => {
+        setActiveConv({ ...currentConv });
+      });
+    }
+
+    // Cập nhật danh sách conversation (pure — không có side effect)
     setConversations((prev) => {
       const index = prev.findIndex((c) => c.id === msg.conversationId);
       if (index === -1) {
@@ -92,8 +116,20 @@ export default function ChatPage({ activeConv, setActiveConv }) {
       }
 
       const conv = prev[index];
+      const isDirect = conv.type === 'DIRECT';
+      const senderAvatar = msg.sender?.avatarUrl;
+      const newAvatarUrl = (isDirect && msg.sender?.id === conv.otherUserId && senderAvatar)
+        ? senderAvatar
+        : conv.avatarUrl;
+
+      // Cập nhật luôn activeConv nếu đang mở cuộc trò chuyện này
+      if (activeConvRef.current?.id === conv.id && isDirect && senderAvatar) {
+        setActiveConv((prevActive) => (prevActive ? { ...prevActive, avatarUrl: senderAvatar } : prevActive));
+      }
+
       const updatedConv = {
         ...conv,
+        avatarUrl: newAvatarUrl,
         lastMessage: {
           id: msg.id,
           content: msg.content,
@@ -110,7 +146,7 @@ export default function ChatPage({ activeConv, setActiveConv }) {
       copy.splice(index, 1);
       return [updatedConv, ...copy];
     });
-  }, [loadConversations]);
+  }, [loadConversations, currentUser?.id, showNotification, setActiveConv]);
 
   // [FIX] Handler cho typing event từ ChatWindow (active conversation)
   const handleTypingEvent = useCallback((typingEvent) => {
@@ -178,6 +214,35 @@ export default function ChatPage({ activeConv, setActiveConv }) {
     setActiveConv(conv);
   };
 
+  // Xử lý khi user rời nhóm thành công → xoá khỏi danh sách và clear active
+  const handleLeaveGroup = (conversationId) => {
+    setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+    setActiveConv((prev) => (prev?.id === conversationId ? null : prev));
+    setIsDetailPanelOpen(false);
+  };
+
+  const handleJumpToMessage = (msgId) => {
+    setJumpMessageId(msgId);
+    setTimeout(() => setJumpMessageId(null), 300);
+  };
+
+  // Mở hoặc tạo cuộc trò chuyện trực tiếp 1-1 với một thành viên
+  const handleOpenDirectChat = useCallback(async (targetUserId) => {
+    if (!targetUserId || targetUserId === currentUser?.id) return;
+    try {
+      const conv = await conversationApi.getOrCreateDirect(targetUserId);
+      setConversations((prev) => {
+        const existing = prev.find((c) => c.id === conv.id);
+        if (existing) return prev;
+        return [conv, ...prev];
+      });
+      handleSelectConversation(conv);
+      setIsMembersModalOpen(false);
+    } catch (err) {
+      console.error('Failed to open direct chat:', err);
+    }
+  }, [currentUser?.id]);
+
   return (
     <div className="chat-layout-page">
       {/* Left panel: Conversation List */}
@@ -193,7 +258,7 @@ export default function ChatPage({ activeConv, setActiveConv }) {
         />
       </div>
 
-      {/* Right panel: Chat Window */}
+      {/* Middle panel: Chat Window */}
       <div className={`chat-window-column ${!activeConv ? 'hide-on-mobile' : ''}`}>
         {activeConv ? (
           <ErrorBoundary>
@@ -205,6 +270,9 @@ export default function ChatPage({ activeConv, setActiveConv }) {
               onMessageSent={handleMessageUpdated}
               onTypingEvent={handleTypingEvent}
               onPresenceEvent={handlePresenceEvent}
+              onToggleDetailPanel={() => setIsDetailPanelOpen((prev) => !prev)}
+              isDetailOpen={isDetailPanelOpen}
+              jumpMessageId={jumpMessageId}
             />
           </ErrorBoundary>
         ) : (
@@ -218,6 +286,21 @@ export default function ChatPage({ activeConv, setActiveConv }) {
         )}
       </div>
 
+      {/* Right panel: Messenger style Group/Conversation Details */}
+      {activeConv && isDetailPanelOpen && (
+        <div className="chat-detail-column">
+          <ErrorBoundary>
+            <GroupDetailPanel
+              conversation={activeConv}
+              onClose={() => setIsDetailPanelOpen(false)}
+              onLeaveGroup={handleLeaveGroup}
+              onJumpToMessage={handleJumpToMessage}
+              onOpenDirectChat={handleOpenDirectChat}
+            />
+          </ErrorBoundary>
+        </div>
+      )}
+
       {/* Modals */}
       <CreateChatModal
         isOpen={isCreateModalOpen}
@@ -230,7 +313,9 @@ export default function ChatPage({ activeConv, setActiveConv }) {
           isOpen={isMembersModalOpen}
           onClose={() => setIsMembersModalOpen(false)}
           conversationId={activeConv.id}
-          conversationTitle={activeConv.title}
+          conversationTitle={activeConv.title || activeConv.name}
+          onLeaveGroup={handleLeaveGroup}
+          onOpenDirectChat={handleOpenDirectChat}
         />
       )}
     </div>

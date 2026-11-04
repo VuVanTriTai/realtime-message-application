@@ -132,8 +132,13 @@
 .nav-user-mini {
   cursor: pointer;
   transition: transform var(--t-fast);
+  border-radius: var(--r-full);
+  padding: 2px;
 }
-.nav-user-mini:hover { transform: scale(1.06); }
+.nav-user-mini:hover { transform: scale(1.08); }
+.nav-user-mini.active {
+  box-shadow: 0 0 0 2px var(--brand-blue);
+}
 .user-mini-info { display: none; }
 
 /* Main Content */

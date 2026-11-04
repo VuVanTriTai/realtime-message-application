@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Search, Plus, MessageSquarePlus, RefreshCw } from 'lucide-react';
+import { Search, Plus, RefreshCw, MessageSquarePlus, Inbox } from 'lucide-react';
 import ConversationItem from './ConversationItem';
 
 export default function ConversationList({
@@ -12,15 +12,31 @@ export default function ConversationList({
   typingStates = {}, // { [convId]: boolean }
 }) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [activeTab, setActiveTab] = useState('main'); // 'main' | 'requests'
+
+  // Tách conversations thành 2 nhóm dựa vào isStranger
+  const mainConversations = useMemo(
+    () => conversations.filter((c) => !c.isStranger),
+    [conversations]
+  );
+  const requestConversations = useMemo(
+    () => conversations.filter((c) => c.isStranger),
+    [conversations]
+  );
+
+  const currentList = activeTab === 'main' ? mainConversations : requestConversations;
 
   const filteredConversations = useMemo(() => {
-    if (!searchQuery.trim()) return conversations;
+    if (!searchQuery.trim()) return currentList;
     const q = searchQuery.toLowerCase().trim();
-    return conversations.filter((c) =>
-      (c.title && c.title.toLowerCase().includes(q)) ||
+    return currentList.filter((c) =>
+      (c.otherUserName && c.otherUserName.toLowerCase().includes(q)) ||
+      (c.name && c.name.toLowerCase().includes(q)) ||
       (c.lastMessage?.content && c.lastMessage.content.toLowerCase().includes(q))
     );
-  }, [conversations, searchQuery]);
+  }, [currentList, searchQuery]);
+
+  const requestBadge = requestConversations.reduce((acc, c) => acc + (c.unreadCount || 0), 0);
 
   return (
     <div className="conversation-list-panel">
@@ -69,6 +85,32 @@ export default function ConversationList({
             </button>
           )}
         </div>
+
+        {/* Tab switcher: Tin nhắn / Lời nhắn */}
+        <div className="conv-tab-row">
+          <button
+            type="button"
+            className={`conv-tab-btn ${activeTab === 'main' ? 'active' : ''}`}
+            onClick={() => setActiveTab('main')}
+          >
+            Tin nhắn
+            {mainConversations.some((c) => c.unreadCount > 0) && (
+              <span className="conv-tab-dot" />
+            )}
+          </button>
+          <button
+            type="button"
+            className={`conv-tab-btn ${activeTab === 'requests' ? 'active' : ''}`}
+            onClick={() => setActiveTab('requests')}
+          >
+            Lời nhắn
+            {requestBadge > 0 && (
+              <span className="conv-tab-badge">
+                {requestBadge > 99 ? '99+' : requestBadge}
+              </span>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* List Feed */}
@@ -87,27 +129,40 @@ export default function ConversationList({
               isActive={activeConversation?.id === conv.id}
               onSelect={onSelectConversation}
               isTyping={typingStates[conv.id]?.length > 0}
+              isStranger={!!conv.isStranger}
             />
           ))
         ) : (
           <div className="empty-conv-state">
-            <MessageSquarePlus size={44} className="empty-icon" />
-            <p className="empty-title">
-              {searchQuery ? 'Không tìm thấy cuộc trò chuyện' : 'Chưa có cuộc trò chuyện nào'}
-            </p>
-            <p className="empty-subtitle">
-              {searchQuery
-                ? 'Hãy thử tìm kiếm với từ khóa khác'
-                : 'Bắt đầu kết nối bằng cách tạo đoạn chat mới hoặc kết bạn'}
-            </p>
-            {!searchQuery && (
-              <button
-                type="button"
-                className="btn-create-first"
-                onClick={onOpenCreateModal}
-              >
-                <Plus size={16} /> Bắt đầu trò chuyện
-              </button>
+            {activeTab === 'requests' ? (
+              <>
+                <Inbox size={44} className="empty-icon" />
+                <p className="empty-title">Không có lời nhắn nào</p>
+                <p className="empty-subtitle">
+                  Đây là nơi chứa tin nhắn từ những người chưa kết bạn với bạn
+                </p>
+              </>
+            ) : (
+              <>
+                <MessageSquarePlus size={44} className="empty-icon" />
+                <p className="empty-title">
+                  {searchQuery ? 'Không tìm thấy cuộc trò chuyện' : 'Chưa có cuộc trò chuyện nào'}
+                </p>
+                <p className="empty-subtitle">
+                  {searchQuery
+                    ? 'Hãy thử tìm kiếm với từ khóa khác'
+                    : 'Bắt đầu kết nối bằng cách tạo đoạn chat mới hoặc kết bạn'}
+                </p>
+                {!searchQuery && (
+                  <button
+                    type="button"
+                    className="btn-create-first"
+                    onClick={onOpenCreateModal}
+                  >
+                    <Plus size={16} /> Bắt đầu trò chuyện
+                  </button>
+                )}
+              </>
             )}
           </div>
         )}

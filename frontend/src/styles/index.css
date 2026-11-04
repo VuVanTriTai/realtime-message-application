@@ -20,7 +20,7 @@
   --bg-hover: rgba(255, 255, 255, 0.06);
   --bg-active: rgba(0, 132, 255, 0.15);
   --bg-surface: #3a3b3c;
-  --bg-message-own: #0084ff;
+  --bg-message-own: #005cb8;
   --bg-message-other: #3a3b3c;
 
   /* Borders */
@@ -53,7 +53,7 @@
   --r-full: 9999px;
 
   /* Bubble radii (Messenger style) */
-  --bubble-r: 18px;
+  --bubble-r: 15px;
   --bubble-r-tight: 4px;
 
   /* Transitions */
@@ -74,6 +74,7 @@
   --bg-hover: rgba(0, 0, 0, 0.04);
   --bg-active: rgba(0, 132, 255, 0.1);
   --bg-surface: #e4e6eb;
+  --bg-message-own: #0070e0;
   --bg-message-other: #e4e6eb;
   --border: rgba(0, 0, 0, 0.08);
   --border-subtle: rgba(0, 0, 0, 0.04);

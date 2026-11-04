@@ -5,8 +5,14 @@ import SidebarNav from './components/layout/SidebarNav';
 import ChatPage from './components/chat/ChatPage';
 import FriendsPage from './components/friends/FriendsPage';
 import ProfilePage from './components/profile/ProfilePage';
+import JoinGroupPage from './components/chat/JoinGroupPage';
 import { friendApi } from './api/friendApi';
 import { Loader2 } from 'lucide-react';
+
+const getJoinTokenFromUrl = () => {
+  const m = window.location.pathname.match(/^\/join\/([a-zA-Z0-9_-]+)/);
+  return m ? m[1] : null;
+};
 
 export default function App() {
   const { isAuthenticated, loading } = useAuth();
@@ -14,6 +20,24 @@ export default function App() {
   const [activeConv, setActiveConv] = useState(null);
   const [isDark, setIsDark] = useState(true);
   const [pendingFriendsCount, setPendingFriendsCount] = useState(0);
+
+  // Invite link join state
+  const [joinToken, setJoinToken] = useState(() => getJoinTokenFromUrl());
+  const [showAuthForJoin, setShowAuthForJoin] = useState(false);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setJoinToken(getJoinTokenFromUrl());
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated && showAuthForJoin) {
+      setShowAuthForJoin(false);
+    }
+  }, [isAuthenticated, showAuthForJoin]);
 
   // Load pending friend request count for sidebar badge
   const loadPendingCount = useCallback(async () => {
@@ -50,6 +74,28 @@ export default function App() {
           <Loader2 size={40} className="spin-anim" />
           <p>Đang chuẩn bị không gian trò chuyện...</p>
         </div>
+      </div>
+    );
+  }
+
+  // If user is on /join/:token and not currently redirected to login screen
+  if (joinToken && !showAuthForJoin) {
+    return (
+      <div className={isDark ? 'theme-dark' : 'theme-light'}>
+        <JoinGroupPage
+          token={joinToken}
+          onJoined={(conv) => {
+            window.history.pushState({}, '', '/');
+            setJoinToken(null);
+            if (conv) setActiveConv(conv);
+            setActiveTab('chat');
+          }}
+          onGoToLogin={() => setShowAuthForJoin(true)}
+          onBack={() => {
+            window.history.pushState({}, '', '/');
+            setJoinToken(null);
+          }}
+        />
       </div>
     );
   }

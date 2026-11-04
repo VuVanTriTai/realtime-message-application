@@ -170,6 +170,17 @@
 			<version>0.12.5</version>
 			<scope>runtime</scope>
 		</dependency>
+		<!-- Commons Pool2: bat buoc de Lettuce connection pool hoat dong -->
+		<dependency>
+			<groupId>org.apache.commons</groupId>
+			<artifactId>commons-pool2</artifactId>
+		</dependency>
+		<!-- Cloudinary SDK: upload anh/file -->
+		<dependency>
+			<groupId>com.cloudinary</groupId>
+			<artifactId>cloudinary-http45</artifactId>
+			<version>1.39.0</version>
+		</dependency>
 	</dependencies>
 
 	<build>
@@ -218,3 +229,5 @@
 	</build>
 
 </project>
+
+

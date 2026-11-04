@@ -1,6 +1,6 @@
 package com.project.realtime._messaging_application.websocket;
 
-import com.project.realtime._messaging_application.modules.Message.dto.MessageResponse;
+import com.project.realtime._messaging_application.common.ratelimit.WebSocketRateLimiterService;
 import com.project.realtime._messaging_application.modules.Message.dto.SendMessageRequest;
 import com.project.realtime._messaging_application.modules.Message.service.MessageService;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
@@ -9,6 +9,7 @@ import com.project.realtime._messaging_application.websocket.pubsub.RedisMessage
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -17,36 +18,55 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.stereotype.Controller;
 
 import java.security.Principal;
+import java.util.concurrent.Executor;
 
 /**
  * WebSocket/STOMP handler cho tin nhan chat.
  *
- * Dung SimpMessageHeaderAccessor de lay user thay vi @AuthenticationPrincipal
- * vi Spring STOMP voi Spring Security 6+ co the khong inject dung.
+ * Chien luoc thread:
+ *   Viec "nhe" (< 1ms): chay tren STOMP inbound thread (stomp-inbound-*)
+ *     - extractUser()           → doc tu session header, O(1)
+ *     - wsRateLimiter.allow()   → 1 Redis INCR ~ 0.5ms
+ *     - typing / read_receipt   → 1 Redis PUBLISH ~ 1ms
  *
- * Destinations ma client GUI ve server (/app/...):
- *   /app/chat.send    -> gui tin nhan
- *   /app/chat.typing  -> thong bao dang nhap
- *   /app/chat.read    -> danh dau da doc
+ *   Viec "nang" (10-20ms): submit sang taskExecutor (chat-worker-*)
+ *     - messageService.sendMessage() → INSERT PostgreSQL + INSERT outbox
+ *
+ * Tai sao phan tach?
+ *   STOMP inbound thread pool: core=8, max=64.
+ *   Neu giu thread 20ms cho DB write → 64 threads / 20ms = ~3200 msg/s max.
+ *   Neu dai sang chat-worker-*: STOMP thread free ngay → xu ly hang nghin
+ *   frame khac (typing, read, heartbeat) ma khong bi chon.
+ *
+ * Anh huong UX realtime:
+ *   - KHONG anh huong latency nhin thay: delivery van qua OutboxPoller (async tu dau).
+ *   - Cai thien throughput: server xu ly duoc nhieu hon vi STOMP thread khong bi chiem.
+ *   - Error feedback van hoat dong: xu ly trong CompletableFuture.exceptionally().
  */
 @Controller
 public class ChatWebSocketHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ChatWebSocketHandler.class);
 
-    private final MessageService         messageService;
-    private final SimpMessagingTemplate  messagingTemplate;
-    private final PresenceService        presenceService;
-    private final RedisMessagePublisher  redisPublisher;
+    private final MessageService              messageService;
+    private final SimpMessagingTemplate       messagingTemplate;
+    private final PresenceService             presenceService;
+    private final RedisMessagePublisher       redisPublisher;
+    private final WebSocketRateLimiterService wsRateLimiter;
+    private final Executor                    taskExecutor;
 
     public ChatWebSocketHandler(MessageService messageService,
                                 SimpMessagingTemplate messagingTemplate,
                                 PresenceService presenceService,
-                                RedisMessagePublisher redisPublisher) {
+                                RedisMessagePublisher redisPublisher,
+                                WebSocketRateLimiterService wsRateLimiter,
+                                @Qualifier("taskExecutor") Executor taskExecutor) {
         this.messageService    = messageService;
         this.messagingTemplate = messagingTemplate;
         this.presenceService   = presenceService;
         this.redisPublisher    = redisPublisher;
+        this.wsRateLimiter     = wsRateLimiter;
+        this.taskExecutor      = taskExecutor;
     }
 
     // ================================================================
@@ -63,50 +83,89 @@ public class ChatWebSocketHandler {
     }
 
     // ================================================================
-    // Gui tin nhan
+    // Gui tin nhan — STOMP thread chi lam viec nhe, DB chay o chat-worker-*
     // ================================================================
 
     /**
      * Client gui den: /app/chat.send
-     * Sau khi luu DB thanh cong -> publish len Redis -> tat ca instance forward toi WebSocket clients.
+     *
+     * Flow chi tiet:
+     *  [STOMP inbound thread] (<= 2ms tong cong)
+     *    1. extractUser()             → O(1)
+     *    2. wsRateLimiter.allow()     → 1 Redis INCR ~ 0.5ms
+     *    3. taskExecutor.execute()    → submit task, RETURN NGAY
+     *
+     *  [chat-worker-* thread] (10-20ms, khong block STOMP)
+     *    4. messageService.sendMessage() → INSERT message + INSERT outbox (1 transaction)
+     *    5a. Thanh cong → log debug
+     *    5b. That bai   → gui ErrorPayload ve /queue/errors cua user
+     *
+     *  [outbox-poller-* thread, sau <= 500ms]
+     *    6. OutboxPoller doc PENDING → publish Redis → subscriber forward toi clients
      */
     @MessageMapping("/chat.send")
     public void sendMessage(
             @Payload @Valid SendMessageRequest req,
             SimpMessageHeaderAccessor accessor) {
 
+        // --- [STOMP thread] Xac thuc ---
         User user = extractUser(accessor);
         if (user == null) {
             log.warn("sendMessage: unauthenticated request, ignored");
             return;
         }
 
-        try {
-            MessageResponse saved = messageService.sendMessage(user.getId(), req);
-
-            // PUBLISH len Redis -> tat ca instance nhan va forward toi WebSocket clients
-            redisPublisher.publish(saved.conversationId(), RedisEventType.NEW_MESSAGE, saved);
-
-            log.debug("Published NEW_MESSAGE: conversation={} sender={} id={}",
-                    saved.conversationId(), user.getUsername(), saved.id());
-
-        } catch (Exception e) {
+        // --- [STOMP thread] Rate limit (<= 1ms) ---
+        if (!wsRateLimiter.allowMessage(user.getId())) {
             messagingTemplate.convertAndSendToUser(
                     user.getUsername(),
                     "/queue/errors",
-                    new ErrorPayload("SEND_FAILED", e.getMessage())
+                    new ErrorPayload("RATE_LIMITED",
+                            "Ban gui qua nhieu tin nhan. Vui long thu lai sau " +
+                            WebSocketRateLimiterService.MSG_WINDOW_S + " giay.")
             );
-            log.error("sendMessage error for user={}: {}", user.getUsername(), e.getMessage(), e);
+            return;
         }
+
+        // --- [STOMP thread] Snap user info truoc khi switch thread ---
+        // QUAN TRONG: khong truyen 'accessor' sang thread khac — SimpMessageHeaderAccessor
+        // khong thread-safe sau khi STOMP frame xu ly xong (co the bi recycle).
+        final Long   userId   = user.getId();
+        final String username = user.getUsername();
+
+        // --- Submit viec nang sang chat-worker-* (khong block STOMP thread) ---
+        taskExecutor.execute(() -> {
+            try {
+                // Luu Message + MessageOutbox trong 1 transaction
+                messageService.sendMessage(userId, req);
+
+                log.debug("[chat-worker] Message saved: conversation={} sender={}",
+                        req.conversationId(), username);
+
+            } catch (Exception e) {
+                // DB that bai → bao nguoi gui qua private queue
+                log.error("[chat-worker] sendMessage failed: user={} error={}",
+                        username, e.getMessage(), e);
+
+                messagingTemplate.convertAndSendToUser(
+                        username,
+                        "/queue/errors",
+                        new ErrorPayload("SEND_FAILED", e.getMessage())
+                );
+            }
+        });
+
+        // STOMP inbound thread duoc giai phong NGAY TAI DAY
+        // Khong can cho DB — co the xu ly frame tiep theo cua 9.999 client khac
     }
 
     // ================================================================
-    // Typing indicator
+    // Typing indicator — nhe, giu tren STOMP thread
     // ================================================================
 
     /**
      * Client gui den: /app/chat.typing
-     * Publish typing event len Redis -> tat ca instance forward toi thanh vien.
+     * Hoan toan nhe (Redis SET + Redis PUBLISH), khong can chuyen thread.
      */
     @MessageMapping("/chat.typing")
     public void handleTyping(
@@ -116,7 +175,11 @@ public class ChatWebSocketHandler {
         User user = extractUser(accessor);
         if (user == null) return;
 
-        // Cap nhat Redis typing key (TTL 3 giay)
+        // Rate limit typing — im lang drop, khong anh huong UX
+        if (!wsRateLimiter.allowTyping(user.getId())) {
+            return;
+        }
+
         presenceService.setTyping(payload.conversationId(), user.getId());
 
         TypingEvent event = new TypingEvent(
@@ -127,17 +190,15 @@ public class ChatWebSocketHandler {
                 payload.isTyping()
         );
 
-        // Publish qua Redis -> tat ca instance forward
         redisPublisher.publish(payload.conversationId(), RedisEventType.TYPING, event);
     }
 
     // ================================================================
-    // Danh dau da doc
+    // Danh dau da doc — nhe, giu tren STOMP thread
     // ================================================================
 
     /**
      * Client gui den: /app/chat.read
-     * Payload: { "conversationId": 1, "messageId": 500 }
      */
     @MessageMapping("/chat.read")
     public void markRead(

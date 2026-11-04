@@ -215,18 +215,32 @@ export function WebSocketProvider({ children }) {
 
   /**
    * Send a new chat message via WebSocket /app/chat.send
+   * Supports both object payload and positional arguments
    */
-  const sendMessage = useCallback((conversationId, content, type = 'TEXT', clientMessageId = null) => {
+  const sendMessage = useCallback((arg1, arg2, arg3 = 'TEXT', arg4 = null) => {
     if (!stompClientRef.current?.connected) {
       throw new Error('Chưa kết nối đến máy chủ WebSocket.');
     }
 
-    const payload = {
-      conversationId,
-      content,
-      type,
-      clientMessageId: clientMessageId || `ws_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
-    };
+    const payload = typeof arg1 === 'object' && arg1 !== null
+      ? {
+          conversationId: arg1.conversationId,
+          content: arg1.content,
+          type: arg1.type || 'TEXT',
+          replyToId: arg1.replyToId || null,
+          mediaUrl: arg1.mediaUrl || null,
+          mediaType: arg1.mediaType || null,
+          fileName: arg1.fileName || null,
+          thumbUrl: arg1.thumbUrl || null,
+          fileSize: arg1.fileSize || null,
+          clientMessageId: arg1.clientMessageId || `ws_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+        }
+      : {
+          conversationId: arg1,
+          content: arg2,
+          type: arg3,
+          clientMessageId: arg4 || `ws_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+        };
 
     stompClientRef.current.publish({
       destination: '/app/chat.send',

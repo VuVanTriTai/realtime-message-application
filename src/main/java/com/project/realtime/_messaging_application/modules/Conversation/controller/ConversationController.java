@@ -17,13 +17,17 @@ import java.util.List;
  * Base path: /api/conversations
  *
  * Endpoints:
- *   GET    /api/conversations              – danh sách chat của tôi
- *   POST   /api/conversations/direct       – tạo / lấy conversation DIRECT
- *   POST   /api/conversations/group        – tạo conversation GROUP
- *   GET    /api/conversations/{id}/members – danh sách thành viên
- *   POST   /api/conversations/{id}/members – thêm thành viên (admin/owner)
- *   DELETE /api/conversations/{id}/members/{userId} – kick thành viên (admin/owner)
- *   PATCH  /api/conversations/{id}/read   – đánh dấu đã đọc
+ *   GET    /api/conversations                        – danh sách chat của tôi
+ *   POST   /api/conversations/direct                 – tạo / lấy conversation DIRECT
+ *   POST   /api/conversations/group                  – tạo conversation GROUP
+ *   GET    /api/conversations/{id}/members           – danh sách thành viên
+ *   POST   /api/conversations/{id}/members           – thêm thành viên (admin/owner)
+ *   DELETE /api/conversations/{id}/members/{userId}  – kick thành viên (admin/owner)
+ *   PATCH  /api/conversations/{id}/read             – đánh dấu đã đọc
+ *   POST   /api/conversations/{id}/invite-link       – tạo/lấy invite link (admin/owner)
+ *   POST   /api/conversations/{id}/invite-link/reset – làm mới invite link (owner)
+ *   GET    /api/conversations/invite/{token}/preview – xem preview nhóm (PUBLIC)
+ *   POST   /api/conversations/invite/{token}/join    – tham gia nhóm qua token (auth)
  */
 @RestController
 @RequestMapping("/api/conversations")
@@ -102,6 +106,33 @@ public class ConversationController {
         return ResponseEntity.noContent().build();
     }
 
+    /**
+     * POST /api/conversations/{id}/leave – tự rời nhóm
+     * Body (optional): { "newOwnerId": 123 } – bắt buộc nếu người rời là OWNER
+     */
+    @PostMapping("/{id}/leave")
+    public ResponseEntity<Void> leaveGroup(
+            @PathVariable Long id,
+            @AuthenticationPrincipal User currentUser,
+            @RequestBody(required = false) LeaveGroupRequest req) {
+        Long newOwnerId = (req != null) ? req.newOwnerId() : null;
+        conversationService.leaveGroup(id, currentUser.getId(), newOwnerId);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * POST /api/conversations/{id}/transfer-owner – chuyển quyền Owner
+     * Body: { "newOwnerId": 123 }
+     */
+    @PostMapping("/{id}/transfer-owner")
+    public ResponseEntity<Void> transferOwnership(
+            @PathVariable Long id,
+            @AuthenticationPrincipal User currentUser,
+            @RequestBody TransferOwnerRequest req) {
+        conversationService.transferOwnership(id, currentUser.getId(), req.newOwnerId());
+        return ResponseEntity.noContent().build();
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // Đánh dấu đã đọc
     // ──────────────────────────────────────────────────────────────────────
@@ -117,5 +148,53 @@ public class ConversationController {
             @AuthenticationPrincipal User currentUser) {
         conversationService.markRead(id, currentUser.getId(), messageId);
         return ResponseEntity.noContent().build();
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Group Invite Link
+    // ──────────────────────────────────────────────────────────────────────
+
+    /**
+     * POST /api/conversations/{id}/invite-link
+     * Tạo hoặc lấy lại invite link. Chỉ Admin/Owner mới được gọi.
+     */
+    @PostMapping("/{id}/invite-link")
+    public ResponseEntity<InviteLinkResponse> generateInviteLink(
+            @PathVariable Long id,
+            @AuthenticationPrincipal User currentUser) {
+        return ResponseEntity.ok(conversationService.generateInviteLink(id, currentUser.getId()));
+    }
+
+    /**
+     * POST /api/conversations/{id}/invite-link/reset
+     * Làm mới (thu hồi) invite link cũ và tạo link mới. Chỉ Owner mới được gọi.
+     */
+    @PostMapping("/{id}/invite-link/reset")
+    public ResponseEntity<InviteLinkResponse> resetInviteLink(
+            @PathVariable Long id,
+            @AuthenticationPrincipal User currentUser) {
+        return ResponseEntity.ok(conversationService.resetInviteLink(id, currentUser.getId()));
+    }
+
+    /**
+     * GET /api/conversations/invite/{token}/preview
+     * Xem thông tin preview nhóm theo token. PUBLIC — không cần xác thực.
+     * Cần được permit trong SecurityConfig.
+     */
+    @GetMapping("/invite/{token}/preview")
+    public ResponseEntity<GroupPreviewResponse> getGroupPreview(
+            @PathVariable String token) {
+        return ResponseEntity.ok(conversationService.getGroupPreview(token));
+    }
+
+    /**
+     * POST /api/conversations/invite/{token}/join
+     * Tham gia nhóm theo token. Cần xác thực.
+     */
+    @PostMapping("/invite/{token}/join")
+    public ResponseEntity<ConversationSummaryResponse> joinByToken(
+            @PathVariable String token,
+            @AuthenticationPrincipal User currentUser) {
+        return ResponseEntity.ok(conversationService.joinByToken(token, currentUser.getId()));
     }
 }

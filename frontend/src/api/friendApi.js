@@ -86,3 +86,8 @@ export const friendApi = {
       method: 'DELETE',
     }),
 };
+
+/** Tìm kiếm user bất kỳ theo keyword (username / displayName) */
+export const userApi = {
+  search: (keyword) => apiRequest(`/users/search?keyword=${encodeURIComponent(keyword)}`),
+};

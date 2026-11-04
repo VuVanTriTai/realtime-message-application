@@ -121,6 +121,30 @@ public class Message {
     private MessageType type;
 
     // ──────────────────────────────────────────────────────────────────────
+    // Media fields (chi dung khi type = IMAGE hoac FILE)
+    // ──────────────────────────────────────────────────────────────────────
+
+    /** Cloudinary secure_url cua file/anh da upload */
+    @Column(name = "media_url", columnDefinition = "TEXT")
+    private String mediaUrl;
+
+    /** MIME type: image/jpeg, image/png, application/pdf, ... */
+    @Column(name = "media_type", length = 100)
+    private String mediaType;
+
+    /** Ten file goc nguoi dung chon (hien thi o UI) */
+    @Column(name = "file_name", length = 255)
+    private String fileName;
+
+    /** Kich thuoc file tinh bang bytes */
+    @Column(name = "file_size")
+    private Long fileSize;
+
+    /** URL thumbnail (Cloudinary tu tao cho anh/video, null cho file khac) */
+    @Column(name = "thumb_url", columnDefinition = "TEXT")
+    private String thumbUrl;
+
+    // ──────────────────────────────────────────────────────────────────────
     // Timestamps & trạng thái
     // ──────────────────────────────────────────────────────────────────────
 
@@ -252,4 +276,20 @@ public class Message {
 
     public Instant getDeletedAt()                  { return deletedAt; }
     public void setDeletedAt(Instant deletedAt)    { this.deletedAt = deletedAt; }
+
+    // Media getters/setters
+    public String getMediaUrl()                    { return mediaUrl; }
+    public void setMediaUrl(String mediaUrl)       { this.mediaUrl = mediaUrl; }
+
+    public String getMediaType()                   { return mediaType; }
+    public void setMediaType(String mediaType)     { this.mediaType = mediaType; }
+
+    public String getFileName()                    { return fileName; }
+    public void setFileName(String fileName)       { this.fileName = fileName; }
+
+    public Long getFileSize()                      { return fileSize; }
+    public void setFileSize(Long fileSize)         { this.fileSize = fileSize; }
+
+    public String getThumbUrl()                    { return thumbUrl; }
+    public void setThumbUrl(String thumbUrl)       { this.thumbUrl = thumbUrl; }
 }

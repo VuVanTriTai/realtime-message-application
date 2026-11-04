@@ -34,9 +34,11 @@ public class UserController {
             @Valid @RequestBody UpdateProfileRequest request) {
         User user = userRepository.findById(currentUser.getId())
                 .orElseThrow(() -> new RuntimeException("User not found"));
-        user.setDisplayName(request.displayName());
+        if (request.displayName() != null && !request.displayName().isBlank()) {
+            user.setDisplayName(request.displayName().trim());
+        }
         if (request.avatarUrl() != null) {
-            user.setAvatarUrl(request.avatarUrl());
+            user.setAvatarUrl(request.avatarUrl().trim().isEmpty() ? null : request.avatarUrl().trim());
         }
         User saved = userRepository.save(user);
         return ResponseEntity.ok(UserProfileResponse.fromEntity(saved));

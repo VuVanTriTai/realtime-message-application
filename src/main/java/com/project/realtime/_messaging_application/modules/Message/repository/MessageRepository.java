@@ -116,6 +116,37 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     // ──────────────────────────────────────────────────────────────────────
 
     /**
+     * Tìm kiếm tin nhắn theo nội dung trong cuộc trò chuyện (chỉ tin chưa bị xoá).
+     */
+    @Query("""
+            SELECT m FROM Message m
+            WHERE m.conversation.id = :conversationId
+              AND m.deletedAt IS NULL
+              AND LOWER(m.content) LIKE LOWER(CONCAT('%', :query, '%'))
+            ORDER BY m.id DESC
+            LIMIT 50
+            """)
+    List<Message> searchMessages(
+            @Param("conversationId") Long conversationId,
+            @Param("query")          String query
+    );
+
+    /**
+     * Lấy danh sách media (ảnh, file) và tin nhắn có liên kết URL trong cuộc trò chuyện.
+     */
+    @Query("""
+            SELECT m FROM Message m
+            WHERE m.conversation.id = :conversationId
+              AND m.deletedAt IS NULL
+              AND (m.type IN ('IMAGE', 'FILE') OR (m.content LIKE '%http://%' OR m.content LIKE '%https://%'))
+            ORDER BY m.id DESC
+            LIMIT 150
+            """)
+    List<Message> findMediaMessages(
+            @Param("conversationId") Long conversationId
+    );
+
+    /**
      * Soft-delete một tin nhắn.
      * Chỉ người gửi mới được xoá → phải kiểm tra senderId ở service trước.
      */

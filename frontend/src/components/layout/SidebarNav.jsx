@@ -63,18 +63,6 @@ export default function SidebarNav({
             )}
           </div>
         </button>
-
-        <button
-          type="button"
-          id="nav-profile"
-          className={`nav-btn ${activeTab === 'profile' ? 'active' : ''}`}
-          onClick={() => setActiveTab('profile')}
-          title="Hồ sơ"
-        >
-          <div className="nav-btn-icon-wrapper">
-            <User size={22} />
-          </div>
-        </button>
       </nav>
 
       {/* Footer */}
@@ -96,11 +84,11 @@ export default function SidebarNav({
           {isDark ? <Sun size={18} /> : <Moon size={18} />}
         </button>
 
-        {/* Avatar */}
+        {/* Avatar - Click vào để mở Hồ sơ */}
         <div
-          className="nav-user-mini"
+          className={`nav-user-mini ${activeTab === 'profile' ? 'active' : ''}`}
           onClick={() => setActiveTab('profile')}
-          title={currentUser?.displayName || currentUser?.username}
+          title={`Hồ sơ: ${currentUser?.displayName || currentUser?.username}`}
         >
           <Avatar
             name={currentUser?.displayName || currentUser?.username}
@@ -110,17 +98,6 @@ export default function SidebarNav({
             showStatus={true}
           />
         </div>
-
-        {/* Logout */}
-        <button
-          type="button"
-          id="btn-logout"
-          className="nav-icon-action logout-btn"
-          onClick={logout}
-          title="Đăng xuất"
-        >
-          <LogOut size={18} />
-        </button>
       </div>
     </aside>
   );

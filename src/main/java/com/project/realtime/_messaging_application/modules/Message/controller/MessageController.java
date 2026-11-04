@@ -70,6 +70,31 @@ public class MessageController {
                 messageService.getMissedMessages(conversationId, currentUser.getId(), lastId));
     }
 
+    /**
+     * GET /api/messages/search?conversationId=1&q=hello
+     * Tìm kiếm tin nhắn theo nội dung.
+     */
+    @GetMapping("/search")
+    public ResponseEntity<List<MessageResponse>> searchMessages(
+            @RequestParam Long conversationId,
+            @RequestParam String q,
+            @AuthenticationPrincipal User currentUser) {
+        return ResponseEntity.ok(
+                messageService.searchMessages(conversationId, currentUser.getId(), q));
+    }
+
+    /**
+     * GET /api/messages/media?conversationId=1
+     * Lấy danh sách ảnh và file đã chia sẻ trong cuộc trò chuyện.
+     */
+    @GetMapping("/media")
+    public ResponseEntity<List<MessageResponse>> getMediaMessages(
+            @RequestParam Long conversationId,
+            @AuthenticationPrincipal User currentUser) {
+        return ResponseEntity.ok(
+                messageService.getMediaMessages(conversationId, currentUser.getId()));
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // Gửi tin nhắn (REST fallback)
     // ──────────────────────────────────────────────────────────────────────

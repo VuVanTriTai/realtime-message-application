@@ -8,9 +8,15 @@ import com.project.realtime._messaging_application.modules.Message.dto.MessageRe
 import com.project.realtime._messaging_application.modules.Message.dto.SendMessageRequest;
 import com.project.realtime._messaging_application.modules.Message.entity.Message;
 import com.project.realtime._messaging_application.modules.Message.entity.MessageType;
+import com.project.realtime._messaging_application.modules.Message.entity.MessageOutbox;
+import com.project.realtime._messaging_application.modules.Message.repository.MessageOutboxRepository;
 import com.project.realtime._messaging_application.modules.Message.repository.MessageRepository;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.modules.User.repository.UserRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,19 +31,27 @@ import java.util.List;
 @Transactional(readOnly = true)
 public class MessageService {
 
-    private final MessageRepository          messageRepo;
-    private final ConversationRepository     conversationRepo;
+    private static final Logger log = LoggerFactory.getLogger(MessageService.class);
+
+    private final MessageRepository messageRepo;
+    private final ConversationRepository conversationRepo;
     private final ConversationMemberRepository memberRepo;
-    private final UserRepository             userRepo;
+    private final UserRepository userRepo;
+    private final MessageOutboxRepository outboxRepo;
+    private final ObjectMapper objectMapper;
 
     public MessageService(MessageRepository messageRepo,
-                          ConversationRepository conversationRepo,
-                          ConversationMemberRepository memberRepo,
-                          UserRepository userRepo) {
-        this.messageRepo      = messageRepo;
+            ConversationRepository conversationRepo,
+            ConversationMemberRepository memberRepo,
+            UserRepository userRepo,
+            MessageOutboxRepository outboxRepo,
+            ObjectMapper objectMapper) {
+        this.messageRepo = messageRepo;
         this.conversationRepo = conversationRepo;
-        this.memberRepo       = memberRepo;
-        this.userRepo         = userRepo;
+        this.memberRepo = memberRepo;
+        this.userRepo = userRepo;
+        this.outboxRepo = outboxRepo;
+        this.objectMapper = objectMapper;
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -46,6 +60,7 @@ public class MessageService {
 
     /**
      * Lấy trang đầu tiên (50 tin mới nhất) của conversation.
+     * 
      * @param cursor null = lấy trang đầu; có giá trị = lấy tin cũ hơn cursor
      */
     public List<MessageResponse> getHistory(Long conversationId, Long userId, Long cursor) {
@@ -68,8 +83,8 @@ public class MessageService {
      * Client gửi lastReceivedMessageId → server trả các tin có id lớn hơn.
      */
     public List<MessageResponse> getMissedMessages(Long conversationId,
-                                                    Long userId,
-                                                    Long lastReceivedMessageId) {
+            Long userId,
+            Long lastReceivedMessageId) {
         assertMember(conversationId, userId);
         return messageRepo.findMissedMessages(conversationId, lastReceivedMessageId)
                 .stream()
@@ -86,11 +101,12 @@ public class MessageService {
      * tin đã lưu thay vì lưu lại (retry-safe).
      *
      * Trong cùng một @Transactional:
-     *  1. Lưu Message vào DB
-     *  2. Cập nhật last_message_id / last_message_at của Conversation
+     * 1. Lưu Message vào DB
+     * 2. Cập nhật last_message_id / last_message_at của Conversation
      * → Đảm bảo 2 bảng luôn nhất quán (denormalized data).
      *
-     * TODO: sau bước lưu, phát tin tới WebSocket / Redis Pub/Sub ở MessageWebSocketHandler.
+     * TODO: sau bước lưu, phát tin tới WebSocket / Redis Pub/Sub ở
+     * MessageWebSocketHandler.
      */
     @Transactional
     public MessageResponse sendMessage(Long senderId, SendMessageRequest req) {
@@ -106,7 +122,7 @@ public class MessageService {
 
         // 3. Load entities
         Conversation conversation = getConversationOrThrow(req.conversationId());
-        User         sender       = getUserOrThrow(senderId);
+        User sender = getUserOrThrow(senderId);
 
         // 4. Xây dựng Message entity
         MessageType messageType = parseType(req.type());
@@ -124,6 +140,15 @@ public class MessageService {
         }
         message.setType(messageType);
 
+        // 5a. Neu la tin media (IMAGE/FILE): luu them cac truong media
+        if (messageType == MessageType.IMAGE || messageType == MessageType.FILE) {
+            if (req.mediaUrl()  != null) message.setMediaUrl(req.mediaUrl());
+            if (req.mediaType() != null) message.setMediaType(req.mediaType());
+            if (req.fileName()  != null) message.setFileName(req.fileName());
+            if (req.fileSize()  != null) message.setFileSize(req.fileSize());
+            if (req.thumbUrl()  != null) message.setThumbUrl(req.thumbUrl());
+        }
+
         // 5. Lưu message
         messageRepo.save(message);
 
@@ -131,7 +156,23 @@ public class MessageService {
         conversationRepo.updateLastMessage(
                 conversation.getId(), message.getId(), message.getCreatedAt());
 
-        return MessageResponse.fromEntity(message);
+        MessageResponse response = MessageResponse.fromEntity(message);
+
+        // 7. [OUTBOX] Ghi outbox record TRONG CÙNG transaction với message
+        // Nếu transaction rollback → outbox cũng rollback → không bao giờ publish tin
+        // không tồn tại
+        // Nếu commit thành công → OutboxPoller sẽ publish lên Redis và đánh dấu DONE
+        try {
+            String payloadJson = objectMapper.writeValueAsString(response);
+            outboxRepo.save(new MessageOutbox(message.getId(), conversation.getId(), payloadJson));
+        } catch (JsonProcessingException e) {
+            // Serialize thất bại = không thể publish realtime, nhưng tin đã lưu DB
+            // Throw để rollback toàn bộ transaction (đảm bảo consistency)
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
+                    "Không thể serialize message cho outbox: " + e.getMessage());
+        }
+
+        return response;
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -150,7 +191,16 @@ public class MessageService {
                     "Không thể sửa tin này (không phải chủ sở hữu, đã xoá hoặc không phải tin TEXT)");
         }
         Message m = messageRepo.findById(messageId).orElseThrow();
-        return MessageResponse.fromEntity(m);
+        MessageResponse response = MessageResponse.fromEntity(m);
+
+        try {
+            String payloadJson = objectMapper.writeValueAsString(response);
+            outboxRepo.save(new MessageOutbox(m.getId(), m.getConversation().getId(), payloadJson));
+        } catch (JsonProcessingException e) {
+            log.warn("Không thể serialize edited message cho outbox: {}", e.getMessage());
+        }
+
+        return response;
     }
 
     /**
@@ -165,6 +215,39 @@ public class MessageService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
                     "Không thể xoá tin này (không phải chủ sở hữu hoặc đã bị xoá)");
         }
+
+        Message m = messageRepo.findById(messageId).orElseThrow();
+        MessageResponse response = MessageResponse.fromEntity(m);
+
+        try {
+            String payloadJson = objectMapper.writeValueAsString(response);
+            outboxRepo.save(new MessageOutbox(m.getId(), m.getConversation().getId(), payloadJson));
+        } catch (JsonProcessingException e) {
+            log.warn("Không thể serialize deleted message cho outbox: {}", e.getMessage());
+        }
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Tìm kiếm tin nhắn & Lấy file phương tiện
+    // ──────────────────────────────────────────────────────────────────────
+
+    public List<MessageResponse> searchMessages(Long conversationId, Long userId, String query) {
+        assertMember(conversationId, userId);
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+        return messageRepo.searchMessages(conversationId, query.trim())
+                .stream()
+                .map(MessageResponse::fromEntity)
+                .toList();
+    }
+
+    public List<MessageResponse> getMediaMessages(Long conversationId, Long userId) {
+        assertMember(conversationId, userId);
+        return messageRepo.findMediaMessages(conversationId)
+                .stream()
+                .map(MessageResponse::fromEntity)
+                .toList();
     }
 
     // ──────────────────────────────────────────────────────────────────────

@@ -35,7 +35,8 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/**", "/auth/**", "/error", "/ws/**", "/ws").permitAll()
+                        .requestMatchers("/api/auth/**", "/auth/**", "/error", "/ws/**", "/ws",
+                                         "/api/conversations/invite/*/preview").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex

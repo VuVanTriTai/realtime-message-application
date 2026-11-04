@@ -5,6 +5,7 @@ import jakarta.persistence.*;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 /**
  * Bảng conversations – đại diện cho một khung chat.
@@ -100,6 +101,14 @@ public class Conversation {
     @Column(name = "last_message_at")
     private Instant lastMessageAt;
 
+    /**
+     * Token mời tham gia nhóm (chỉ dùng cho GROUP).
+     * Sinh bằng UUID, unique trên toàn bảng.
+     * Null khi chưa được tạo hoặc đã bị thu hồi.
+     */
+    @Column(name = "invite_token", unique = true, length = 64)
+    private String inviteToken;
+
     // ──────────────────────────────────────────────────────────────────────
     // JPA Lifecycle
     // ──────────────────────────────────────────────────────────────────────
@@ -162,6 +171,15 @@ public class Conversation {
         this.lastMessageAt = sentAt;
     }
 
+    /**
+     * Tạo/làm mới invite token cho nhóm.
+     * Token là chuỗi 32 ký tự hex (UUID không dấu gạch ngang).
+     */
+    public String generateAndSetInviteToken() {
+        this.inviteToken = UUID.randomUUID().toString().replace("-", "");
+        return this.inviteToken;
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // Constructors
     // ──────────────────────────────────────────────────────────────────────
@@ -195,4 +213,7 @@ public class Conversation {
 
     public Instant getLastMessageAt()            { return lastMessageAt; }
     public void setLastMessageAt(Instant lastMessageAt) { this.lastMessageAt = lastMessageAt; }
+
+    public String getInviteToken()               { return inviteToken; }
+    public void setInviteToken(String inviteToken) { this.inviteToken = inviteToken; }
 }

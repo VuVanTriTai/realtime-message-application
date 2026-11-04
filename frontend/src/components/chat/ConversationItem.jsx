@@ -1,14 +1,13 @@
 import React from 'react';
 import Avatar from '../common/Avatar';
 import { formatDateOrRelative } from '../../utils/formatters';
-import { Users, CheckCheck } from 'lucide-react';
+import { Users, UserX2 } from 'lucide-react';
 
-export default function ConversationItem({ conversation, isActive, onSelect, isTyping = false }) {
+export default function ConversationItem({ conversation, isActive, onSelect, isTyping = false, isStranger = false }) {
   const isGroup = conversation.type === 'GROUP';
-    // [FIX] With DIRECT: use otherUserName (backend provides other person's name); GROUP: use name/title
   const title = isGroup
-    ? (conversation.name || conversation.title || 'Nhom chua dat ten')
-    : (conversation.otherUserName || conversation.title || conversation.name || 'Cuoc tro chuyen');
+    ? (conversation.name || conversation.title || 'Nhóm chưa đặt tên')
+    : (conversation.otherUserName || conversation.title || conversation.name || 'Cuộc trò chuyện');
   const lastMsg = conversation.lastMessage;
   const unreadCount = conversation.unreadCount || 0;
 
@@ -42,6 +41,11 @@ export default function ConversationItem({ conversation, isActive, onSelect, isT
         {isGroup && (
           <span className="group-badge-icon" title="Nhóm chat">
             <Users size={12} />
+          </span>
+        )}
+        {isStranger && !isGroup && (
+          <span className="stranger-badge-icon" title="Người chưa kết bạn">
+            <UserX2 size={11} />
           </span>
         )}
       </div>

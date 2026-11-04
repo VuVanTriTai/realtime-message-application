@@ -6,25 +6,39 @@ import com.project.realtime._messaging_application.modules.User.dto.UserProfileR
 import java.time.Instant;
 
 /**
- * DTO trả về thông tin một tin nhắn cho client.
+ * DTO tra ve thong tin mot tin nhan cho client.
  *
- * Khi tin bị xoá mềm (deleted_at != null):
- *  - content   → null (ẩn nội dung)
+ * Khi tin bi xoa mem (deleted_at != null):
+ *  - content, mediaUrl, thumbUrl → null (an noi dung)
  *  - isDeleted → true
- * Client hiển thị placeholder "Tin nhắn đã bị xoá".
+ *
+ * Khi type = IMAGE hoac FILE:
+ *  - content  : Cloudinary secure_url (URL day du)
+ *  - mediaUrl : giong content (reduntdant, de frontend ro rang)
+ *  - thumbUrl : thumbnail URL (chi co voi IMAGE/VIDEO)
+ *  - fileName : ten file goc
+ *  - fileSize : kich thuoc bytes
+ *  - mediaType: MIME type (image/jpeg, application/pdf, ...)
  */
 public record MessageResponse(
-        Long               id,
-        Long               conversationId,
-        UserProfileResponse sender,        // null nếu tin SYSTEM
-        String             clientMessageId,
-        String             content,        // null khi isDeleted = true
-        String             type,
-        ReplyPreview       replyTo,        // null nếu không phải reply
-        Instant            createdAt,
-        Instant            editedAt,
-        boolean            isEdited,
-        boolean            isDeleted
+        Long                id,
+        Long                conversationId,
+        UserProfileResponse sender,         // null neu tin SYSTEM
+        String              clientMessageId,
+        String              content,         // null khi isDeleted = true
+        String              type,
+        ReplyPreview        replyTo,         // null neu khong phai reply
+        Instant             createdAt,
+        Instant             editedAt,
+        boolean             isEdited,
+        boolean             isDeleted,
+
+        // --- Media fields (null neu type = TEXT hoac SYSTEM) ---
+        String              mediaUrl,
+        String              mediaType,
+        String              fileName,
+        Long                fileSize,
+        String              thumbUrl
 ) {
     public static MessageResponse fromEntity(Message m) {
         boolean deleted = m.isDeleted();
@@ -35,7 +49,7 @@ public record MessageResponse(
                         ? UserProfileResponse.fromEntityPublic(m.getSender())
                         : null,
                 m.getClientMessageId(),
-                deleted ? null : m.getContent(),   // ẩn nội dung khi bị xoá
+                deleted ? null : m.getContent(),
                 m.getType().name(),
                 m.getReplyTo() != null
                         ? ReplyPreview.fromEntity(m.getReplyTo())
@@ -43,25 +57,38 @@ public record MessageResponse(
                 m.getCreatedAt(),
                 m.getEditedAt(),
                 m.isEdited(),
-                deleted
+                deleted,
+
+                // Media fields — null khi tin bi xoa hoac khong co media
+                deleted ? null : m.getMediaUrl(),
+                m.getMediaType(),
+                m.getFileName(),
+                m.getFileSize(),
+                deleted ? null : m.getThumbUrl()
         );
     }
 
     /**
-     * Preview ngắn của tin nhắn được trả lời.
-     * Hiển thị dưới dạng trích dẫn trong bubble chat.
+     * Preview ngan cua tin nhan duoc tra loi.
+     * Hien thi duoi dang trich dan trong bubble chat.
      */
     public record ReplyPreview(
-            Long    id,
-            String  senderUsername,
-            String  contentPreview   // tối đa 100 ký tự
+            Long   id,
+            String senderUsername,
+            String contentPreview   // toi da 100 ky tu
     ) {
         public static ReplyPreview fromEntity(Message replied) {
-            String preview = replied.isDeleted()
-                    ? "Tin nhắn đã bị xoá"
-                    : (replied.getContent().length() > 100
-                    ? replied.getContent().substring(0, 100) + "…"
-                    : replied.getContent());
+            String preview;
+            if (replied.isDeleted()) {
+                preview = "Tin nhan da bi xoa";
+            } else if (replied.getType() == com.project.realtime._messaging_application.modules.Message.entity.MessageType.IMAGE) {
+                preview = "[Hinh anh]" + (replied.getFileName() != null ? " " + replied.getFileName() : "");
+            } else if (replied.getType() == com.project.realtime._messaging_application.modules.Message.entity.MessageType.FILE) {
+                preview = "[File]" + (replied.getFileName() != null ? " " + replied.getFileName() : "");
+            } else {
+                String c = replied.getContent();
+                preview = c.length() > 100 ? c.substring(0, 100) + "…" : c;
+            }
             return new ReplyPreview(
                     replied.getId(),
                     replied.getSender() != null ? replied.getSender().getUsername() : "System",

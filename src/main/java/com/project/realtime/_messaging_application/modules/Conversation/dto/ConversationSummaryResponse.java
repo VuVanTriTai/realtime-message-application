@@ -23,7 +23,9 @@ public record ConversationSummaryResponse(
         long              unreadCount,
         Long              otherUserId,       // (DIRECT only) userId cua nguoi kia
         String            otherUserName,     // (DIRECT only) ten hien thi cua nguoi kia
+        String            avatarUrl,         // [ADDED] avatarUrl cua conversation (DIRECT la avatar cua otherUser)
         boolean           isOnline,          // trang thai online hien tai
+        boolean           isStranger,        // (DIRECT only) true neu nguoi kia chua phai ban be
         LastMessagePreview lastMessage        // [ADDED] preview tin nhan cuoi cho sidebar
 ) {
 
@@ -78,6 +80,8 @@ public record ConversationSummaryResponse(
                 unreadCount,
                 null,
                 null,
+                null,
+                false,
                 false,
                 LastMessagePreview.fromMessage(lastMsg)
         );
@@ -90,6 +94,7 @@ public record ConversationSummaryResponse(
             long unreadCount,
             User otherUser,
             boolean isOnline,
+            boolean isStranger,
             Message lastMsg
     ) {
         String displayName = (otherUser.getDisplayName() != null && !otherUser.getDisplayName().isBlank())
@@ -108,7 +113,9 @@ public record ConversationSummaryResponse(
                 unreadCount,
                 otherUser.getId(),
                 displayName,
+                otherUser.getAvatarUrl(),
                 isOnline,
+                isStranger,
                 LastMessagePreview.fromMessage(lastMsg)
         );
     }

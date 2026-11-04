@@ -25,6 +25,12 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
      */
     Optional<Conversation> findByDirectKey(String directKey);
 
+    /**
+     * Tìm conversation GROUP theo invite_token.
+     * Dùng ở trang /join/:token để xem preview và tham gia nhóm.
+     */
+    Optional<Conversation> findByInviteToken(String inviteToken);
+
     // ──────────────────────────────────────────────────────────────────────
     // Danh sách chat của một user (sidebar)
     // ──────────────────────────────────────────────────────────────────────
