@@ -67,8 +67,16 @@ public class ConversationService {
                     .findByConversationIdAndUserId(conv.getId(), userId)
                     .orElse(null);
 
-            long lastReadId  = (membership != null && membership.getLastReadMessageId() != null)
-                    ? membership.getLastReadMessageId() : 0L;
+            long lastReadId = 0L;
+            if (membership != null) {
+                if (membership.getLastReadMessageId() != null) {
+                    lastReadId = membership.getLastReadMessageId();
+                } else if (conv.isGroup() && conv.getLastMessageId() != null) {
+                    // Thành viên nhóm chưa có lastReadMessageId (ví dụ mới vào nhóm)
+                    // -> Coi như đã đọc các tin trước khi vào nhóm để tránh tính unread quá khứ
+                    lastReadId = conv.getLastMessageId();
+                }
+            }
             long unreadCount = messageRepo.countUnread(conv.getId(), userId, lastReadId);
 
             if (conv.isDirect()) {

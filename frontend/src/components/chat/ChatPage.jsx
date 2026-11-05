@@ -38,10 +38,18 @@ export default function ChatPage({ activeConv, setActiveConv }) {
     try {
       const data = await conversationApi.getMyConversations();
       const list = Array.isArray(data) ? data : [];
-      setConversations(list);
 
       if (!activeConvRef.current && list.length > 0 && window.innerWidth > 768) {
-        setActiveConv(list[0]);
+        const first = list[0];
+        setActiveConv(first);
+        setConversations(list.map((c, i) => (i === 0 ? { ...c, unreadCount: 0 } : c)));
+      } else if (activeConvRef.current) {
+        // Đảm bảo active conversation trong sidebar luôn hiển thị unreadCount = 0
+        setConversations(
+          list.map((c) => (c.id === activeConvRef.current.id ? { ...c, unreadCount: 0 } : c))
+        );
+      } else {
+        setConversations(list);
       }
     } catch (err) {
       console.error('Failed to load conversations:', err);
@@ -133,6 +141,8 @@ export default function ChatPage({ activeConv, setActiveConv }) {
         lastMessage: {
           id: msg.id,
           content: msg.content,
+          type: msg.type,
+          fileName: msg.fileName,
           senderId: msg.sender?.id,
           senderName: msg.sender?.displayName || msg.sender?.username,
           senderUsername: msg.sender?.username,
@@ -205,6 +215,12 @@ export default function ChatPage({ activeConv, setActiveConv }) {
     setTypingStates((prev) => ({ ...prev, [conv.id]: [] }));
   };
 
+  const handleConversationRead = useCallback((convId) => {
+    setConversations((prev) =>
+      prev.map((c) => (c.id === convId ? { ...c, unreadCount: 0 } : c))
+    );
+  }, []);
+
   const handleConversationCreated = (conv) => {
     setConversations((prev) => {
       const existing = prev.find((c) => c.id === conv.id);
@@ -273,6 +289,7 @@ export default function ChatPage({ activeConv, setActiveConv }) {
               onToggleDetailPanel={() => setIsDetailPanelOpen((prev) => !prev)}
               isDetailOpen={isDetailPanelOpen}
               jumpMessageId={jumpMessageId}
+              onMarkRead={handleConversationRead}
             />
           </ErrorBoundary>
         ) : (

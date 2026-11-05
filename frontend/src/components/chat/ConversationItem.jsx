@@ -19,7 +19,15 @@ export default function ConversationItem({ conversation, isActive, onSelect, isT
       subtitle = 'Tin nhắn đã thu hồi';
     } else {
       const senderPrefix = lastMsg.senderName ? `${lastMsg.senderName}: ` : '';
-      subtitle = `${senderPrefix}${lastMsg.content || ''}`;
+      let text = lastMsg.content || '';
+      if (lastMsg.type === 'IMAGE' || (!text && lastMsg.mediaUrl)) {
+        text = '[Hình ảnh]' + (lastMsg.fileName ? ` ${lastMsg.fileName}` : '');
+      } else if (lastMsg.type === 'FILE') {
+        text = `[Tệp] ${lastMsg.fileName || 'đính kèm'}`;
+      } else if (typeof text === 'string' && text.startsWith('http') && (text.includes('cloudinary') || text.includes('/upload/'))) {
+        text = '[Tệp đính kèm]';
+      }
+      subtitle = `${senderPrefix}${text}`;
     }
   }
 

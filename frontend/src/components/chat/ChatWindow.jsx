@@ -20,6 +20,7 @@ export default function ChatWindow({
   onToggleDetailPanel,
   isDetailOpen = false,
   jumpMessageId = null,
+  onMarkRead,
 }) {
   const { currentUser } = useAuth();
   const { subscribeToConversation, sendMessage: wsSendMessage, sendTyping: wsSendTyping, sendRead: wsSendRead } = useWebSocket();
@@ -39,10 +40,12 @@ export default function ChatWindow({
   const onMessageSentRef = useRef(onMessageSent);
   const onTypingEventRef = useRef(onTypingEvent);
   const onPresenceEventRef = useRef(onPresenceEvent);
+  const onMarkReadRef = useRef(onMarkRead);
   const currentUserRef = useRef(currentUser);
   useEffect(() => { onMessageSentRef.current = onMessageSent; }, [onMessageSent]);
   useEffect(() => { onTypingEventRef.current = onTypingEvent; }, [onTypingEvent]);
   useEffect(() => { onPresenceEventRef.current = onPresenceEvent; }, [onPresenceEvent]);
+  useEffect(() => { onMarkReadRef.current = onMarkRead; }, [onMarkRead]);
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
   const isGroup = conversation?.type === 'GROUP';
@@ -75,6 +78,7 @@ export default function ChatWindow({
         if (newest && newest.id) {
           wsSendRead(conversation.id, newest.id);
           conversationApi.markRead(conversation.id, newest.id).catch(() => {});
+          if (onMarkReadRef.current) onMarkReadRef.current(conversation.id);
         }
       } else {
         setHasMore(false);
@@ -152,6 +156,7 @@ export default function ChatWindow({
         if (newMsg.sender?.id !== currentUserRef.current?.id) {
           wsSendRead(conversation.id, newMsg.id);
           conversationApi.markRead(conversation.id, newMsg.id).catch(() => {});
+          if (onMarkReadRef.current) onMarkReadRef.current(conversation.id);
         }
 
         // Scroll to bottom

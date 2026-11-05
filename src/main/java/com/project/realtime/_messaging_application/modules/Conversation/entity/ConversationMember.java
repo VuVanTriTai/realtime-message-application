@@ -99,6 +99,9 @@ public class ConversationMember {
         cm.user         = user;
         cm.role         = role;
         cm.joinedAt     = LocalDateTime.now();
+        if (conversation != null && conversation.getLastMessageId() != null) {
+            cm.lastReadMessageId = conversation.getLastMessageId();
+        }
         return cm;
     }
 
