@@ -13,6 +13,8 @@ export function WebSocketProvider({ children }) {
   // subConfig = { convId, handlersRef: { current: {onMessage, onTyping, onRead, onPresence} }, subscriptions: [] }
   const activeSubsRef = useRef(new Map());
   const heartbeatTimerRef = useRef(null);
+  const userEventHandlersRef = useRef(new Set());
+  const userSubRef = useRef(null);
 
   // Initialize and connect STOMP client
   useEffect(() => {
@@ -64,12 +66,35 @@ export function WebSocketProvider({ children }) {
           subConfig.subscriptions = [];
           doSubscribe(client, subConfig);
         });
+
+        // Subscribe kênh cá nhân của user (/topic/user.{userId})
+        if (userSubRef.current) {
+          try { userSubRef.current.unsubscribe(); } catch (_) {}
+          userSubRef.current = null;
+        }
+        if (currentUser?.id) {
+          userSubRef.current = client.subscribe(`/topic/user.${currentUser.id}`, (msg) => {
+            try {
+              const payload = JSON.parse(msg.body);
+              console.log('[WS] User personal event received:', payload);
+              userEventHandlersRef.current.forEach((fn) => {
+                try { fn(payload); } catch (e) { console.error('[WS] user event handler error:', e); }
+              });
+            } catch (err) {
+              console.error('[WS] Error parsing user event:', err);
+            }
+          });
+        }
       },
 
       onDisconnect: () => {
         console.log('[WS] Disconnected');
         setIsConnected(false);
         if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+        if (userSubRef.current) {
+          try { userSubRef.current.unsubscribe(); } catch (_) {}
+          userSubRef.current = null;
+        }
       },
 
       onStompError: (frame) => {
@@ -82,6 +107,10 @@ export function WebSocketProvider({ children }) {
 
     return () => {
       if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
+      if (userSubRef.current) {
+        try { userSubRef.current.unsubscribe(); } catch (_) {}
+        userSubRef.current = null;
+      }
       activeSubsRef.current.forEach((subConfig) => {
         subConfig.subscriptions.forEach((s) => { try { s.unsubscribe(); } catch (_) {} });
       });
@@ -272,11 +301,24 @@ export function WebSocketProvider({ children }) {
     });
   }, []);
 
+  /**
+   * Đăng ký lắng nghe sự kiện cá nhân của user (/topic/user.{userId})
+   * Dùng cho ChatPage để nhận thông báo realtime khi được thêm vào nhóm mới hoặc bị kick
+   */
+  const subscribeToUserEvents = useCallback((handler) => {
+    if (typeof handler !== 'function') return () => {};
+    userEventHandlersRef.current.add(handler);
+    return () => {
+      userEventHandlersRef.current.delete(handler);
+    };
+  }, []);
+
   return (
     <WebSocketContext.Provider
       value={{
         isConnected,
         subscribeToConversation,
+        subscribeToUserEvents,
         sendMessage,
         sendTyping,
         sendRead,

@@ -13,6 +13,8 @@ import com.project.realtime._messaging_application.modules.Message.repository.Me
 import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.modules.User.repository.UserRepository;
 import com.project.realtime._messaging_application.websocket.PresenceService;
+import com.project.realtime._messaging_application.websocket.pubsub.RedisEventType;
+import com.project.realtime._messaging_application.websocket.pubsub.RedisMessagePublisher;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -35,19 +37,22 @@ public class ConversationService {
     private final MessageRepository            messageRepo;
     private final PresenceService              presenceService;
     private final FriendshipRepository         friendshipRepo;
+    private final RedisMessagePublisher        redisPublisher;
 
     public ConversationService(ConversationRepository conversationRepo,
                                ConversationMemberRepository memberRepo,
                                UserRepository userRepo,
                                MessageRepository messageRepo,
                                PresenceService presenceService,
-                               FriendshipRepository friendshipRepo) {
+                               FriendshipRepository friendshipRepo,
+                               RedisMessagePublisher redisPublisher) {
         this.conversationRepo = conversationRepo;
         this.memberRepo       = memberRepo;
         this.userRepo         = userRepo;
         this.messageRepo      = messageRepo;
         this.presenceService  = presenceService;
         this.friendshipRepo   = friendshipRepo;
+        this.redisPublisher   = redisPublisher;
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -179,6 +184,19 @@ public class ConversationService {
                     boolean areFriends = friendshipRepo
                             .findBetweenWithStatus(currentUserId, target.getId(), FriendshipStatus.ACCEPTED)
                             .isPresent();
+
+                    // Bắn realtime cho target user qua WebSocket cá nhân
+                    try {
+                        ConversationMember targetMembership = memberRepo
+                                .findByConversationIdAndUserId(conv.getId(), target.getId())
+                                .orElse(null);
+                        boolean meOnline = presenceService.isOnline(me.getId());
+                        ConversationSummaryResponse targetSummary = ConversationSummaryResponse.fromEntityWithOtherUser(
+                                conv, targetMembership, 0L, me, meOnline, !areFriends, null);
+                        redisPublisher.publishToUser(target.getId(), RedisEventType.CONVERSATION_JOINED,
+                                UserConversationEvent.joined(targetSummary));
+                    } catch (Exception ignored) {}
+
                     return ConversationSummaryResponse.fromEntityWithOtherUser(
                             conv, myMembership, 0L, target, isOnline, !areFriends, null);
                 });
@@ -211,7 +229,14 @@ public class ConversationService {
         List<User> members = userRepo.findAllByIdInAndNotDeleted(req.memberIds());
         for (User member : members) {
             if (!member.getId().equals(currentUserId)) {
-                memberRepo.save(ConversationMember.create(conv, member, MemberRole.MEMBER));
+                ConversationMember cm = ConversationMember.create(conv, member, MemberRole.MEMBER);
+                memberRepo.save(cm);
+
+                try {
+                    ConversationSummaryResponse memberSummary = ConversationSummaryResponse.fromEntity(conv, cm, 0L, null);
+                    redisPublisher.publishToUser(member.getId(), RedisEventType.CONVERSATION_JOINED,
+                            UserConversationEvent.joined(memberSummary));
+                } catch (Exception ignored) {}
             }
         }
 
@@ -258,7 +283,18 @@ public class ConversationService {
                     "Nhóm đã đạt giới hạn " + MAX_GROUP_MEMBERS + " thành viên");
         }
 
-        memberRepo.save(ConversationMember.create(conv, newUser, MemberRole.MEMBER));
+        ConversationMember newMember = ConversationMember.create(conv, newUser, MemberRole.MEMBER);
+        memberRepo.save(newMember);
+
+        // Bắn WebSocket realtime tới user vừa được thêm vào nhóm
+        try {
+            Message lastMsg = conv.getLastMessageId() != null
+                    ? messageRepo.findById(conv.getLastMessageId()).orElse(null)
+                    : null;
+            ConversationSummaryResponse summary = ConversationSummaryResponse.fromEntity(conv, newMember, 0L, lastMsg);
+            redisPublisher.publishToUser(newUserId, RedisEventType.CONVERSATION_JOINED,
+                    UserConversationEvent.joined(summary));
+        } catch (Exception ignored) {}
     }
 
     /**
@@ -273,6 +309,12 @@ public class ConversationService {
                     "Dùng API rời nhóm để tự thoát");
         }
         memberRepo.deleteByConversationIdAndUserId(conversationId, targetUserId);
+
+        // Bắn WebSocket thông báo cho user bị kick
+        try {
+            redisPublisher.publishToUser(targetUserId, RedisEventType.CONVERSATION_LEFT,
+                    UserConversationEvent.left(conversationId));
+        } catch (Exception ignored) {}
     }
 
     /**

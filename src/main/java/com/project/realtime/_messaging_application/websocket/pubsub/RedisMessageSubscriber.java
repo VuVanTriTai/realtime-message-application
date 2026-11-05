@@ -92,6 +92,13 @@ public class RedisMessageSubscriber implements MessageListener {
                             convId, presenceEvent.userId(), presenceEvent.online());
                 }
 
+                case CONVERSATION_JOINED, CONVERSATION_LEFT -> {
+                    // envelope.getConversationId() chứa target userId
+                    messagingTemplate.convertAndSend(
+                            "/topic/user." + convId, payload);
+                    log.debug("Forwarded {} to /topic/user.{}", envelope.getEventType(), convId);
+                }
+
                 default -> log.warn("Unknown event type: {}", envelope.getEventType());
             }
 

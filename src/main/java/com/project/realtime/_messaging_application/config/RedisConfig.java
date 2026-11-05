@@ -17,8 +17,8 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
 @Configuration
 public class RedisConfig {
 
-    /** Prefix pattern để subscribe tất cả channel chat */
-    private static final String CHAT_CHANNEL_PATTERN = "chat:conv:*";
+    /** Prefix pattern để subscribe tất cả channel chat (bao gồm cả conv và user) */
+    private static final String CHAT_CHANNEL_PATTERN = "chat:*";
 
     @Bean
     public ObjectMapper objectMapper() {

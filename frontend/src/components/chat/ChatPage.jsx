@@ -20,7 +20,7 @@ export default function ChatPage({ activeConv, setActiveConv }) {
   const [jumpMessageId, setJumpMessageId] = useState(null);
   // { [convId]: string[] } — danh sách tên người đang typing trong mỗi conversation
   const [typingStates, setTypingStates] = useState({});
-  const { subscribeToConversation } = useWebSocket();
+  const { subscribeToConversation, subscribeToUserEvents } = useWebSocket();
   const { currentUser } = useAuth();
   const { showNotification } = useNotification();
 
@@ -100,6 +100,43 @@ export default function ChatPage({ activeConv, setActiveConv }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversations.length, activeConv?.id]);
+
+  // Lắng nghe sự kiện cá nhân (được thêm vào nhóm mới, cuộc trò chuyện mới hoặc bị kick)
+  useEffect(() => {
+    if (!subscribeToUserEvents) return;
+
+    const unsubscribe = subscribeToUserEvents((event) => {
+      console.log('[ChatPage] Received user personal event:', event);
+
+      if (event?.type === 'JOINED' && event.conversation) {
+        const newConv = event.conversation;
+        setConversations((prev) => {
+          if (prev.some((c) => c.id === newConv.id)) return prev;
+          return [newConv, ...prev];
+        });
+
+        // Bắn thông báo desktop / browser
+        const groupName = newConv.name || newConv.title || 'Nhóm mới';
+        showNotification(
+          {
+            content: `Bạn đã được thêm vào cuộc trò chuyện "${groupName}"`,
+            sender: { displayName: 'Hệ thống' },
+            createdAt: new Date().toISOString(),
+          },
+          newConv,
+          () => {
+            setActiveConv(newConv);
+          }
+        );
+      } else if (event?.type === 'LEFT' && event.conversationId) {
+        handleLeaveGroup(event.conversationId);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [subscribeToUserEvents, handleLeaveGroup, showNotification, setActiveConv]);
 
   // When a message is sent or received, update the conversation item in list
   const handleMessageUpdated = useCallback((msg) => {

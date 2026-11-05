@@ -12,5 +12,9 @@ public enum RedisEventType {
     /** Đã đọc đến messageId nào đó */
     READ_RECEIPT,
     /** Thay đổi trạng thái online/offline của một thành viên */
-    PRESENCE
+    PRESENCE,
+    /** Cuộc trò chuyện mới được tạo hoặc user được thêm vào nhóm */
+    CONVERSATION_JOINED,
+    /** User bị xoá khỏi nhóm (kick) */
+    CONVERSATION_LEFT
 }

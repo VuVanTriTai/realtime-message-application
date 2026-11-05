@@ -60,6 +60,9 @@ class ConversationServiceTest {
     @Mock
     private FriendshipRepository friendshipRepo;
 
+    @Mock
+    private com.project.realtime._messaging_application.websocket.pubsub.RedisMessagePublisher redisPublisher;
+
     @InjectMocks
     private ConversationService conversationService;
 
