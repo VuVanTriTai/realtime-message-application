@@ -177,6 +177,12 @@ export default function GroupDetailPanel({
     () => mediaList.filter((m) => m.type === 'FILE' && (m.mediaUrl || m.content)),
     [mediaList]
   );
+  // Danh sách các hostname media/storage nội bộ — KHÔNG hiển thị trong tab Link
+  const INTERNAL_MEDIA_HOSTS = [
+    'res.cloudinary.com',
+    'cloudinary.com',
+  ];
+
   const linkMessages = useMemo(() => {
     const list = [];
     const URL_REGEX = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/g;
@@ -197,6 +203,11 @@ export default function GroupDetailPanel({
             host = new URL(u).hostname;
           } catch {
             host = u;
+          }
+
+          // Bỏ qua các URL lưu trữ media nội bộ (Cloudinary upload)
+          if (INTERNAL_MEDIA_HOSTS.some((h) => host === h || host.endsWith('.' + h))) {
+            continue;
           }
 
           list.push({

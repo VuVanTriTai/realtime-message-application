@@ -132,13 +132,18 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     );
 
     /**
-     * Lấy danh sách media (ảnh, file) và tin nhắn có liên kết URL trong cuộc trò chuyện.
+     * Lấy danh sách media (ảnh, file) và tin nhắn TEXT có liên kết URL trong cuộc trò chuyện.
+     * Chỉ lấy TEXT message có URL (không lấy IMAGE/FILE riêng để tránh trùng) — frontend
+     * dùng type để phân loại vào tab Ảnh, File, hoặc Liên kết.
      */
     @Query("""
             SELECT m FROM Message m
             WHERE m.conversation.id = :conversationId
               AND m.deletedAt IS NULL
-              AND (m.type IN ('IMAGE', 'FILE') OR (m.content LIKE '%http://%' OR m.content LIKE '%https://%'))
+              AND (
+                m.type IN ('IMAGE', 'FILE')
+                OR (m.type = 'TEXT' AND (m.content LIKE '%http://%' OR m.content LIKE '%https://%'))
+              )
             ORDER BY m.id DESC
             LIMIT 150
             """)
