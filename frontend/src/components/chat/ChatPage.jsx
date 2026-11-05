@@ -32,6 +32,13 @@ export default function ChatPage({ activeConv, setActiveConv }) {
   const activeConvRef = useRef(activeConv);
   useEffect(() => { activeConvRef.current = activeConv; }, [activeConv]);
 
+  // Xử lý khi user rời nhóm hoặc bị kick → xoá khỏi danh sách và clear active
+  const handleLeaveGroup = useCallback((conversationId) => {
+    setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+    setActiveConv((prev) => (prev?.id === conversationId ? null : prev));
+    setIsDetailPanelOpen(false);
+  }, [setActiveConv]);
+
   // Load conversations
   const loadConversations = useCallback(async () => {
     setLoading(true);
@@ -265,13 +272,6 @@ export default function ChatPage({ activeConv, setActiveConv }) {
       return [conv, ...prev];
     });
     setActiveConv(conv);
-  };
-
-  // Xử lý khi user rời nhóm thành công → xoá khỏi danh sách và clear active
-  const handleLeaveGroup = (conversationId) => {
-    setConversations((prev) => prev.filter((c) => c.id !== conversationId));
-    setActiveConv((prev) => (prev?.id === conversationId ? null : prev));
-    setIsDetailPanelOpen(false);
   };
 
   const handleJumpToMessage = (msgId) => {
