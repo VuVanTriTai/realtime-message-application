@@ -2,6 +2,7 @@ package com.project.realtime._messaging_application.modules.Conversation.service
 
 import com.project.realtime._messaging_application.modules.Conversation.dto.ConversationSummaryResponse;
 import com.project.realtime._messaging_application.modules.Conversation.dto.CreateDirectConversationRequest;
+import com.project.realtime._messaging_application.modules.Conversation.dto.CreateGroupConversationRequest;
 import com.project.realtime._messaging_application.modules.Conversation.entity.Conversation;
 import com.project.realtime._messaging_application.modules.Conversation.entity.ConversationMember;
 import com.project.realtime._messaging_application.modules.Conversation.entity.ConversationType;
@@ -283,6 +284,89 @@ class ConversationServiceTest {
 
             verify(conversationRepo, never()).save(any());
             verify(memberRepo, never()).save(any());
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // addMember — Giới hạn 500 thành viên
+    // ══════════════════════════════════════════════════════════════════════════
+
+    @Nested
+    @DisplayName("addMember() — giới hạn 500 thành viên")
+    class AddMemberGroupLimitTests {
+
+        private static final long CONV_ID      = 10L;
+        private static final long REQUESTER_ID = 1L;
+        private static final long NEW_USER_ID  = 99L;
+
+        @Test
+        @DisplayName("Thêm thành viên khi nhóm đã đủ 500 người → ném BAD_REQUEST")
+        void addMember_whenGroupIsFull_shouldThrowBadRequest() {
+            // ── Arrange ──────────────────────────────────────────────────────
+            // Requester là ADMIN/OWNER
+            ConversationMember adminMember = new ConversationMember();
+            adminMember.setRole(MemberRole.ADMIN);
+            when(memberRepo.findByConversationIdAndUserId(CONV_ID, REQUESTER_ID))
+                    .thenReturn(Optional.of(adminMember));
+
+            // newUser chưa phải thành viên
+            when(memberRepo.findByConversationIdAndUserId(CONV_ID, NEW_USER_ID))
+                    .thenReturn(Optional.empty());
+
+            // Nhóm hiện có 500 người
+            when(memberRepo.countByConversationId(CONV_ID)).thenReturn(500);
+
+            // Conversation tồn tại
+            Conversation conv = new Conversation();
+            conv.setType(ConversationType.GROUP);
+            when(conversationRepo.findById(CONV_ID)).thenReturn(Optional.of(conv));
+
+            // newUser tồn tại
+            User newUser = new User();
+            newUser.setId(NEW_USER_ID);
+            when(userRepo.findById(NEW_USER_ID)).thenReturn(Optional.of(newUser));
+
+            // ── Act & Assert ─────────────────────────────────────────────────
+            assertThatThrownBy(() -> conversationService.addMember(CONV_ID, REQUESTER_ID, NEW_USER_ID))
+                    .isInstanceOf(ResponseStatusException.class)
+                    .satisfies(ex -> {
+                        ResponseStatusException rse = (ResponseStatusException) ex;
+                        assertThat(rse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+                        assertThat(rse.getReason()).contains("500");
+                    });
+
+            // memberRepo.save() KHÔNG được gọi khi nhóm đầy
+            verify(memberRepo, never()).save(any());
+        }
+
+        @Test
+        @DisplayName("Thêm thành viên khi nhóm còn 499 người → thành công")
+        void addMember_whenGroupHasRoom_shouldSucceed() {
+            // ── Arrange ──────────────────────────────────────────────────────
+            ConversationMember adminMember = new ConversationMember();
+            adminMember.setRole(MemberRole.ADMIN);
+            when(memberRepo.findByConversationIdAndUserId(CONV_ID, REQUESTER_ID))
+                    .thenReturn(Optional.of(adminMember));
+
+            when(memberRepo.findByConversationIdAndUserId(CONV_ID, NEW_USER_ID))
+                    .thenReturn(Optional.empty());
+
+            // Nhóm hiện có 499 người → còn chỗ
+            when(memberRepo.countByConversationId(CONV_ID)).thenReturn(499);
+
+            Conversation conv = new Conversation();
+            conv.setType(ConversationType.GROUP);
+            when(conversationRepo.findById(CONV_ID)).thenReturn(Optional.of(conv));
+
+            User newUser = new User();
+            newUser.setId(NEW_USER_ID);
+            when(userRepo.findById(NEW_USER_ID)).thenReturn(Optional.of(newUser));
+
+            // ── Act ──────────────────────────────────────────────────────────
+            conversationService.addMember(CONV_ID, REQUESTER_ID, NEW_USER_ID);
+
+            // ── Assert ───────────────────────────────────────────────────────
+            verify(memberRepo, times(1)).save(any(ConversationMember.class));
         }
     }
 }

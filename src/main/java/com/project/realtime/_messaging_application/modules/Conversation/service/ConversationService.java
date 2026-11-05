@@ -26,7 +26,8 @@ import java.util.List;
 @Transactional(readOnly = true)
 public class ConversationService {
 
-    private static final String FRONTEND_BASE_URL = "http://localhost:5173";
+    private static final String FRONTEND_BASE_URL   = "http://localhost:5173";
+    private static final int    MAX_GROUP_MEMBERS    = 500;
 
     private final ConversationRepository       conversationRepo;
     private final ConversationMemberRepository memberRepo;
@@ -184,6 +185,14 @@ public class ConversationService {
                                                     CreateGroupConversationRequest req) {
         User creator = getUserOrThrow(currentUserId);
 
+        // Kiểm tra số lượng thành viên ban đầu (creator + members) không vượt giới hạn
+        int initialSize = 1 + (req.memberIds() == null ? 0 : (int) req.memberIds().stream()
+                .filter(id -> !id.equals(currentUserId)).count());
+        if (initialSize > MAX_GROUP_MEMBERS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Nhóm không được vượt quá " + MAX_GROUP_MEMBERS + " thành viên");
+        }
+
         Conversation conv = Conversation.createGroup(creator, req.name());
         conversationRepo.save(conv);
 
@@ -232,6 +241,13 @@ public class ConversationService {
                 .isPresent();
         if (alreadyMember) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "User đã là thành viên");
+        }
+
+        // Kiểm tra giới hạn thành viên nhóm
+        int currentCount = memberRepo.countByConversationId(conversationId);
+        if (currentCount >= MAX_GROUP_MEMBERS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Nhóm đã đạt giới hạn " + MAX_GROUP_MEMBERS + " thành viên");
         }
 
         memberRepo.save(ConversationMember.create(conv, newUser, MemberRole.MEMBER));
@@ -421,6 +437,12 @@ public class ConversationService {
         // Nếu đã là member → trả về conversation luôn (idempotent)
         boolean alreadyMember = memberRepo.findByConversationIdAndUserId(conv.getId(), userId).isPresent();
         if (!alreadyMember) {
+            // Kiểm tra giới hạn thành viên nhóm trước khi tham gia
+            int currentCount = memberRepo.countByConversationId(conv.getId());
+            if (currentCount >= MAX_GROUP_MEMBERS) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Nhóm đã đạt giới hạn " + MAX_GROUP_MEMBERS + " thành viên");
+            }
             memberRepo.save(ConversationMember.create(conv, user, MemberRole.MEMBER));
         }
 
