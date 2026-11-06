@@ -110,10 +110,18 @@ public class MessageService {
      */
     @Transactional
     public MessageResponse sendMessage(Long senderId, SendMessageRequest req) {
-        // 1. Kiểm tra quyền
+        // 1. Kiểm tra quyền thành viên trong hội thoại
         assertMember(req.conversationId(), senderId);
 
-        // 2. Idempotency check
+        // 2. Kiểm tra tính hợp lệ của nội dung tin nhắn (không rỗng, không toàn khoảng trắng, không vượt quá 4000 ký tự)
+        if (req.content() == null || req.content().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nội dung tin nhắn không được để trống");
+        }
+        if (req.content().length() > 4000) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Tin nhắn tối đa 4000 ký tự");
+        }
+
+        // 3. Idempotency check
         var existing = messageRepo.findByClientMessageId(
                 req.conversationId(), senderId, req.clientMessageId());
         if (existing.isPresent()) {
