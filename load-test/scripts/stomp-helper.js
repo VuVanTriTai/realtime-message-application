@@ -60,70 +60,85 @@ function parseFrame(raw) {
 }
 
 // ============================================================
-// Connect + subscribe
+// Connect + subscribe (Standard k6 blocking pattern)
 // ============================================================
 
 /**
- * Mo ket noi STOMP va subscribe vao cac topic cua conversationIds.
+ * Mo ket noi STOMP va giu ket noi trong holdDurationSeconds (chuan k6).
+ * Tu dong gui heartbeat '\n' dinh ky moi 10s de server khong ngat session.
  *
- * @param {string}   token          - JWT token
- * @param {string[]} conversationIds - Danh sach ID hoi thoai can subscribe
- * @param {function} onMessage      - Callback khi nhan MESSAGE frame: (frame) => void
- * @param {function} onClose        - Callback khi WS dong: () => void (optional)
- * @returns {object} stomp handle { socket, subscriptionId }
+ * @param {string}   token                - JWT token
+ * @param {string[]} conversationIds      - Danh sach ID hoi thoai can subscribe
+ * @param {number}   holdDurationSeconds  - Thoi gian giu ket noi (giay)
+ * @param {function} onMessageCallback    - Callback khi nhan MESSAGE frame: (msg) => void
+ * @returns {object} res tu ws.connect
  */
-export function stompConnect(token, conversationIds, onMessage, onClose) {
+export function stompConnectAndHold(token, conversationIds, holdDurationSeconds, onMessageCallback) {
   let subscriptionId = 0;
-  const handle = { socket: null };
+  let heartbeatTimer = null;
 
-  const socket = ws.connect(
+  const res = ws.connect(
     WS_URL,
     { headers: { Authorization: `Bearer ${token}` } },
-    function (sock) {
-      handle.socket = sock;
-
-      // Gui CONNECT frame khi WS mo
-      sock.on("open", () => {
-        sock.send(buildFrame("CONNECT", {
+    function (socket) {
+      // 1. Khi socket TCP mo -> gui STOMP CONNECT frame
+      socket.on("open", () => {
+        socket.send(buildFrame("CONNECT", {
           "accept-version": "1.2",
           "heart-beat":     "10000,10000",
           Authorization:    `Bearer ${token}`,
         }));
       });
 
-      sock.on("message", (data) => {
-        // Bo qua heartbeat (frame la newline hoac rong)
-        if (!data || data.trim() === "" || data === "\n") return;
+      // 2. Nhan frame tu server
+      socket.on("message", (data) => {
+        if (!data || data === "\n" || data.trim() === "") return; // heartbeat frame
 
         const frame = parseFrame(data);
 
         if (frame.command === "CONNECTED") {
-          // Subscribe vao tung conversation topic
-          conversationIds.forEach((convId) => {
-            sock.send(buildFrame("SUBSCRIBE", {
-              id:          `sub-${subscriptionId++}`,
-              destination: `/topic/conversation.${convId}`,
-            }));
-          });
+          // Subscribe vao cac conversation
+          if (conversationIds && conversationIds.length > 0) {
+            conversationIds.forEach((convId) => {
+              socket.send(buildFrame("SUBSCRIBE", {
+                id:          `sub-${subscriptionId++}`,
+                destination: `/topic/conversation.${convId}`,
+              }));
+            });
+          }
+
+          // Bat dau gui STOMP client heartbeat dinh ky (10 giay/lan)
+          socket.setInterval(() => {
+            try {
+              socket.send("\n"); // STOMP Heartbeat frame chi la ky tu xuong dong
+            } catch (_) {}
+          }, 10000);
         } else if (frame.command === "MESSAGE") {
-          if (onMessage) onMessage(frame);
-        } else if (frame.command === "ERROR") {
-          console.error(`STOMP ERROR: ${frame.body}`);
+          if (onMessageCallback) {
+            try {
+              onMessageCallback(frame.body ? JSON.parse(frame.body) : null);
+            } catch (_) {
+              onMessageCallback(frame.body);
+            }
+          }
         }
       });
 
-      sock.on("close", () => {
-        if (onClose) onClose();
-      });
+      // 3. Giu ket noi dung thoi luong yeu cau, sau do dong an toan
+      socket.setTimeout(() => {
+        try {
+          socket.send(buildFrame("DISCONNECT", {}));
+          socket.close();
+        } catch (_) {}
+      }, holdDurationSeconds * 1000);
 
-      sock.on("error", (e) => {
-        console.error(`WS error: ${e}`);
+      socket.on("error", (e) => {
+        console.error(`Socket error: ${e.error()}`);
       });
     }
   );
 
-  check(socket, { "WebSocket connected (101)": (r) => r && r.status === 101 });
-  return handle;
+  return res;
 }
 
 /**
@@ -153,3 +168,4 @@ export function stompDisconnect(handle) {
     handle.socket.close();
   } catch (_) { /* ignore */ }
 }
+
