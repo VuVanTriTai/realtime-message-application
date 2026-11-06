@@ -17,3 +17,4 @@ public record UserConversationEvent(
         return new UserConversationEvent("LEFT", null, convId);
     }
 }
+

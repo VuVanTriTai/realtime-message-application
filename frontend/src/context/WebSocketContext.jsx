@@ -5,6 +5,26 @@ import { useAuth } from './AuthContext';
 
 const WebSocketContext = createContext(null);
 
+// Cấu hình Exponential Backoff + Jitter chống bão reconnect (Thundering Herd)
+const RECONNECT_BASE_DELAY = 1000;   // Bắt đầu từ ~1s
+const RECONNECT_MAX_DELAY  = 30000;  // Giới hạn tối đa 30s
+const RECONNECT_FACTOR     = 1.8;    // Hệ số nhân lũy thừa
+
+/**
+ * Tính toán thời gian reconnect tiếp theo bằng thuật toán Equal Jitter:
+ * temp = min(MAX_DELAY, BASE_DELAY * (FACTOR ^ attempt))
+ * delay = (temp / 2) + Math.random() * (temp / 2)
+ *
+ * Giúp rải đều (smooth out) các kết nối ngẫu nhiên, tránh việc hàng chục ngàn
+ * client cùng reconnect đập vào server tại cùng một tích tắc sau khi restart/mất mạng.
+ */
+function calculateJitterDelay(attempt) {
+  const exponential = RECONNECT_BASE_DELAY * Math.pow(RECONNECT_FACTOR, attempt);
+  const ceiling = Math.min(RECONNECT_MAX_DELAY, exponential);
+  const half = ceiling / 2;
+  return Math.floor(half + Math.random() * half);
+}
+
 export function WebSocketProvider({ children }) {
   const { currentUser, token } = useAuth();
   const [isConnected, setIsConnected] = useState(false);
@@ -15,6 +35,7 @@ export function WebSocketProvider({ children }) {
   const heartbeatTimerRef = useRef(null);
   const userEventHandlersRef = useRef(new Set());
   const userSubRef = useRef(null);
+  const reconnectAttemptRef = useRef(0);
 
   // Initialize and connect STOMP client
   useEffect(() => {
@@ -33,7 +54,8 @@ export function WebSocketProvider({ children }) {
         token: token,
         Authorization: `Bearer ${token}`,
       },
-      reconnectDelay: 4000,
+      // Khởi tạo delay có Jitter ngẫu nhiên thay vì cố định
+      reconnectDelay: calculateJitterDelay(0),
       heartbeatIncoming: 25000,
       heartbeatOutgoing: 25000,
 
@@ -51,6 +73,9 @@ export function WebSocketProvider({ children }) {
       onConnect: () => {
         console.log('[WS] Connected! Re-subscribing', activeSubsRef.current.size, 'convs');
         setIsConnected(true);
+        // Reset số lần thử kết nối lại khi kết nối thành công
+        reconnectAttemptRef.current = 0;
+        client.reconnectDelay = calculateJitterDelay(0);
 
         // Start 25s periodic heartbeat to /app/heartbeat
         if (heartbeatTimerRef.current) clearInterval(heartbeatTimerRef.current);
@@ -95,6 +120,19 @@ export function WebSocketProvider({ children }) {
           try { userSubRef.current.unsubscribe(); } catch (_) {}
           userSubRef.current = null;
         }
+      },
+
+      // Xử lý khi socket đóng (mất kết nối / rớt mạng):
+      // Áp dụng thuật toán Exponential Backoff + Jitter để tính reconnectDelay mới
+      onWebSocketClose: () => {
+        reconnectAttemptRef.current += 1;
+        const nextDelay = calculateJitterDelay(reconnectAttemptRef.current);
+        client.reconnectDelay = nextDelay;
+        console.warn(`[WS] Connection closed. Attempt #${reconnectAttemptRef.current}, next reconnect in ${nextDelay}ms (Exponential Backoff + Jitter)`);
+      },
+
+      onWebSocketError: (err) => {
+        console.warn('[WS] WebSocket transport error:', err);
       },
 
       onStompError: (frame) => {
