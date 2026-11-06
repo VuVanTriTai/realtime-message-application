@@ -170,6 +170,14 @@
 			<version>0.12.5</version>
 			<scope>runtime</scope>
 		</dependency>
+		<!-- ================================================================ -->
+		<!-- Micrometer + Prometheus: expose /actuator/prometheus endpoint   -->
+		<!-- ================================================================ -->
+		<dependency>
+			<groupId>io.micrometer</groupId>
+			<artifactId>micrometer-registry-prometheus</artifactId>
+		</dependency>
+
 		<!-- Commons Pool2: bat buoc de Lettuce connection pool hoat dong -->
 		<dependency>
 			<groupId>org.apache.commons</groupId>

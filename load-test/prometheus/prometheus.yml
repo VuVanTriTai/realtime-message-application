@@ -1,0 +1,22 @@
+# ============================================================
+# prometheus.yml — Cau hinh scrape cho Spring Boot app
+# ============================================================
+
+global:
+  scrape_interval:     5s   # Scrape moi 5 giay (du nhanh cho load test)
+  evaluation_interval: 5s
+
+scrape_configs:
+
+  # Spring Boot Actuator — /actuator/prometheus
+  - job_name: "spring-boot-chat"
+    metrics_path: "/actuator/prometheus"
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+    # host.docker.internal: tu container truy cap localhost cua may host (Windows/Mac)
+    # Neu Linux: thay bang IP may that (vd: 172.17.0.1 hoac IP LAN)
+
+  # Prometheus tu giam sat chinh no
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

@@ -17,6 +17,8 @@ import com.project.realtime._messaging_application.modules.User.Entity.Role;
 import com.project.realtime._messaging_application.modules.User.Entity.Status;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.modules.User.repository.UserRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Timer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -31,10 +33,13 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -58,6 +63,12 @@ class MessageServiceTest {
 
     @Mock
     private ObjectMapper objectMapper;
+
+    @Mock
+    private Counter messagesSentCounter;   // Micrometer counter mock
+
+    @Mock
+    private Timer messageLatencyTimer;     // Micrometer timer mock
 
     @InjectMocks
     private MessageService messageService;

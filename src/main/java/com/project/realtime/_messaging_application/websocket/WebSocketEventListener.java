@@ -1,10 +1,12 @@
 package com.project.realtime._messaging_application.websocket;
 
+import com.project.realtime._messaging_application.config.MetricsConfig;
 import com.project.realtime._messaging_application.modules.Conversation.repository.ConversationMemberRepository;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.modules.User.repository.UserRepository;
 import com.project.realtime._messaging_application.websocket.pubsub.RedisEventType;
 import com.project.realtime._messaging_application.websocket.pubsub.RedisMessagePublisher;
+import io.micrometer.core.instrument.Counter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -34,17 +36,27 @@ public class WebSocketEventListener {
     private final SimpMessagingTemplate        messagingTemplate;
     private final RedisMessagePublisher        redisPublisher;
     private final ConversationMemberRepository memberRepository;
+    // Metrics — dem ket noi/ngat ket noi de biet bao nhieu session dang mo
+    private final MetricsConfig.AtomicGauge    wsActiveSessionsGauge;
+    private final Counter                      wsSessionsTotalCounter;
+    private final Counter                      wsDisconnectsTotalCounter;
 
     public WebSocketEventListener(PresenceService presenceService,
                                   UserRepository userRepository,
                                   SimpMessagingTemplate messagingTemplate,
                                   RedisMessagePublisher redisPublisher,
-                                  ConversationMemberRepository memberRepository) {
-        this.presenceService   = presenceService;
-        this.userRepository    = userRepository;
-        this.messagingTemplate = messagingTemplate;
-        this.redisPublisher    = redisPublisher;
-        this.memberRepository  = memberRepository;
+                                  ConversationMemberRepository memberRepository,
+                                  MetricsConfig.AtomicGauge wsActiveSessionsGauge,
+                                  Counter wsSessionsTotalCounter,
+                                  Counter wsDisconnectsTotalCounter) {
+        this.presenceService          = presenceService;
+        this.userRepository           = userRepository;
+        this.messagingTemplate        = messagingTemplate;
+        this.redisPublisher           = redisPublisher;
+        this.memberRepository         = memberRepository;
+        this.wsActiveSessionsGauge    = wsActiveSessionsGauge;
+        this.wsSessionsTotalCounter   = wsSessionsTotalCounter;
+        this.wsDisconnectsTotalCounter = wsDisconnectsTotalCounter;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -73,6 +85,10 @@ public class WebSocketEventListener {
                 .forEach(convId ->
                         redisPublisher.publish(convId, RedisEventType.PRESENCE, onlineEvent));
 
+        // Metrics: tang so session dang mo
+        wsActiveSessionsGauge.increment();
+        wsSessionsTotalCounter.increment();
+
         log.info("WebSocket connected: user={} (id={})", user.getUsername(), user.getId());
     }
 
@@ -100,6 +116,10 @@ public class WebSocketEventListener {
                 .findConversationIdsByUserId(user.getId())
                 .forEach(convId ->
                         redisPublisher.publish(convId, RedisEventType.PRESENCE, offlineEvent));
+
+        // Metrics: giam so session dang mo
+        wsActiveSessionsGauge.decrement();
+        wsDisconnectsTotalCounter.increment();
 
         log.info("WebSocket disconnected: user={} (id={})", user.getUsername(), user.getId());
     }

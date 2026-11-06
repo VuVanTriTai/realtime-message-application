@@ -15,6 +15,8 @@ import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.modules.User.repository.UserRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -39,19 +41,26 @@ public class MessageService {
     private final UserRepository userRepo;
     private final MessageOutboxRepository outboxRepo;
     private final ObjectMapper objectMapper;
+    // Metrics
+    private final Counter messagesSentCounter;
+    private final Timer   messageLatencyTimer;
 
     public MessageService(MessageRepository messageRepo,
             ConversationRepository conversationRepo,
             ConversationMemberRepository memberRepo,
             UserRepository userRepo,
             MessageOutboxRepository outboxRepo,
-            ObjectMapper objectMapper) {
-        this.messageRepo = messageRepo;
-        this.conversationRepo = conversationRepo;
-        this.memberRepo = memberRepo;
-        this.userRepo = userRepo;
-        this.outboxRepo = outboxRepo;
-        this.objectMapper = objectMapper;
+            ObjectMapper objectMapper,
+            Counter messagesSentCounter,
+            Timer messageLatencyTimer) {
+        this.messageRepo          = messageRepo;
+        this.conversationRepo     = conversationRepo;
+        this.memberRepo           = memberRepo;
+        this.userRepo             = userRepo;
+        this.outboxRepo           = outboxRepo;
+        this.objectMapper         = objectMapper;
+        this.messagesSentCounter  = messagesSentCounter;
+        this.messageLatencyTimer  = messageLatencyTimer;
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -158,6 +167,7 @@ public class MessageService {
         }
 
         // 5. Lưu message
+        final long saveStart = System.nanoTime();
         messageRepo.save(message);
 
         // 6. Cập nhật denormalized last_message trong cùng transaction
@@ -179,6 +189,10 @@ public class MessageService {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "Không thể serialize message cho outbox: " + e.getMessage());
         }
+
+        // Metrics: ghi nhan so tin da gui va thoi gian xu ly
+        messagesSentCounter.increment();
+        messageLatencyTimer.record(System.nanoTime() - saveStart, java.util.concurrent.TimeUnit.NANOSECONDS);
 
         return response;
     }

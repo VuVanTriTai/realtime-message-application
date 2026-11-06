@@ -1,0 +1,157 @@
+{
+  "title": "Chat Load Test — Realtime Messaging",
+  "uid": "chat-load-test",
+  "version": 1,
+  "schemaVersion": 38,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "WebSocket Sessions Active",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "chat_ws_sessions_active",
+        "legendFormat": "Active"
+      }],
+      "options": { "colorMode": "background", "graphMode": "area" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" },
+        "thresholds": { "steps": [
+          { "value": 0,     "color": "green" },
+          { "value": 5000,  "color": "yellow" },
+          { "value": 10000, "color": "red" }
+        ]}}}
+    },
+    {
+      "id": 2,
+      "title": "Messages / Second",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "rate(chat_messages_sent_total[1m])",
+        "legendFormat": "msg/s"
+      }],
+      "options": { "colorMode": "background" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }}
+    },
+    {
+      "id": 3,
+      "title": "Message Latency P50 / P95 / P99 (ms)",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 4 },
+      "targets": [
+        { "datasource": "Prometheus", "expr": "histogram_quantile(0.50, rate(chat_messages_latency_seconds_bucket[1m])) * 1000", "legendFormat": "P50" },
+        { "datasource": "Prometheus", "expr": "histogram_quantile(0.95, rate(chat_messages_latency_seconds_bucket[1m])) * 1000", "legendFormat": "P95" },
+        { "datasource": "Prometheus", "expr": "histogram_quantile(0.99, rate(chat_messages_latency_seconds_bucket[1m])) * 1000", "legendFormat": "P99" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }}
+    },
+    {
+      "id": 4,
+      "title": "Total Connections / Disconnections",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 4 },
+      "targets": [
+        { "datasource": "Prometheus", "expr": "chat_ws_sessions_total_total", "legendFormat": "Connected" },
+        { "datasource": "Prometheus", "expr": "chat_ws_disconnects_total_total", "legendFormat": "Disconnected" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "WebSocket Sessions Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "chat_ws_sessions_active",
+        "legendFormat": "Active Sessions"
+      }],
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" }}}
+    },
+    {
+      "id": 6,
+      "title": "Message Latency Percentiles Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        { "datasource": "Prometheus", "expr": "histogram_quantile(0.50, rate(chat_messages_latency_seconds_bucket[1m])) * 1000", "legendFormat": "P50 ms" },
+        { "datasource": "Prometheus", "expr": "histogram_quantile(0.95, rate(chat_messages_latency_seconds_bucket[1m])) * 1000", "legendFormat": "P95 ms" },
+        { "datasource": "Prometheus", "expr": "histogram_quantile(0.99, rate(chat_messages_latency_seconds_bucket[1m])) * 1000", "legendFormat": "P99 ms" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms" }}
+    },
+    {
+      "id": 7,
+      "title": "JVM Heap Used (MB)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 8, "h": 7 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "jvm_memory_used_bytes{area=\"heap\"} / 1024 / 1024",
+        "legendFormat": "Heap MB"
+      }],
+      "fieldConfig": { "defaults": { "unit": "MiB" }}
+    },
+    {
+      "id": 8,
+      "title": "JVM GC Pause Time (ms/s)",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 12, "w": 8, "h": 7 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "rate(jvm_gc_pause_seconds_sum[1m]) * 1000",
+        "legendFormat": "GC ms/s"
+      }],
+      "fieldConfig": { "defaults": { "unit": "ms" }}
+    },
+    {
+      "id": 9,
+      "title": "Thread Pool — STOMP Inbound / Outbound Active",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 12, "w": 8, "h": 7 },
+      "targets": [
+        { "datasource": "Prometheus", "expr": "executor_active_threads{name=~\"stomp-inbound.*\"}", "legendFormat": "Inbound Active" },
+        { "datasource": "Prometheus", "expr": "executor_active_threads{name=~\"stomp-outbound.*\"}", "legendFormat": "Outbound Active" },
+        { "datasource": "Prometheus", "expr": "executor_queued_tasks{name=~\"stomp-inbound.*\"}", "legendFormat": "Inbound Queue" }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "HikariCP — Active DB Connections",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 19, "w": 8, "h": 7 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "hikaricp_connections_active",
+        "legendFormat": "Active"
+      }]
+    },
+    {
+      "id": 11,
+      "title": "CPU Usage (%)",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 19, "w": 8, "h": 7 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "process_cpu_usage * 100",
+        "legendFormat": "CPU %"
+      }],
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100 }}
+    },
+    {
+      "id": 12,
+      "title": "Fanout Duration P95 (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 19, "w": 8, "h": 7 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "histogram_quantile(0.95, rate(chat_fanout_duration_seconds_bucket[1m])) * 1000",
+        "legendFormat": "Fanout P95 ms"
+      }],
+      "fieldConfig": { "defaults": { "unit": "ms" }}
+    }
+  ]
+}

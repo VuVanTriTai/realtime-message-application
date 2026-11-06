@@ -1,0 +1,61 @@
+# ============================================================
+# docker-compose.observability.yml
+# Stack giam sat: Prometheus + Grafana + k6 output
+#
+# Chay: docker compose -f load-test/docker-compose.observability.yml up -d
+# Grafana UI: http://localhost:3001  (admin / admin)
+# Prometheus: http://localhost:9090
+# Spring Boot metrics: http://localhost:8080/actuator/prometheus
+# ============================================================
+
+services:
+
+  # ----------------------------------------------------------
+  # Prometheus — scrape /actuator/prometheus moi 5s
+  # ----------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: chat-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    restart: unless-stopped
+    networks:
+      - monitoring
+
+  # ----------------------------------------------------------
+  # Grafana — dashboard realtime
+  # ----------------------------------------------------------
+  grafana:
+    image: grafana/grafana:10.4.3
+    container_name: chat-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/etc/grafana/provisioning/dashboards/chat-load-test.json
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    networks:
+      - monitoring
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  monitoring:
+    driver: bridge
