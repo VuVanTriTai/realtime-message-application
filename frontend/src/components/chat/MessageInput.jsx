@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { mediaApi } from '../../api/mediaApi';
 import { formatFileSize } from '../../utils/formatters';
+import { compressImage } from '../../utils/imageCompressor';
 
 const COMMON_EMOJIS = [
   '😊', '😂', '❤️', '👍', '🔥', '🎉', '👋', '😎',
@@ -28,6 +29,11 @@ export default function MessageInput({
   const [text, setText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
+  const [rawFile, setRawFile] = useState(null);
+  const [compressedFile, setCompressedFile] = useState(null);
+  const [isHD, setIsHD] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [compressionInfo, setCompressionInfo] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -88,7 +94,7 @@ export default function MessageInput({
     }
   };
 
-  const handleFileSelect = (e) => {
+  const handleFileSelect = async (e, isFromImagePicker = false) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -103,10 +109,31 @@ export default function MessageInput({
       URL.revokeObjectURL(previewUrl);
     }
 
-    setSelectedFile(file);
-    if (file.type.startsWith('image/')) {
+    setRawFile(file);
+    setIsHD(false);
+
+    // Nếu chọn từ nút Ảnh hoặc là file ảnh thông thường -> Tự động nén tối ưu
+    if (isFromImagePicker || file.type.startsWith('image/')) {
       setPreviewUrl(URL.createObjectURL(file));
+      setIsCompressing(true);
+      try {
+        const compResult = await compressImage(file);
+        setCompressedFile(compResult.file);
+        setSelectedFile(compResult.file);
+        setCompressionInfo(compResult);
+      } catch (err) {
+        console.warn('Lỗi khi nén ảnh, sử dụng ảnh gốc:', err);
+        setSelectedFile(file);
+        setCompressedFile(file);
+        setCompressionInfo(null);
+      } finally {
+        setIsCompressing(false);
+      }
     } else {
+      // Tệp tài liệu (PDF, Word, Zip...) -> Giữ nguyên 100% không nén
+      setSelectedFile(file);
+      setCompressedFile(null);
+      setCompressionInfo(null);
       setPreviewUrl(null);
     }
 
@@ -115,17 +142,36 @@ export default function MessageInput({
     if (inputRef.current) inputRef.current.focus();
   };
 
+  const toggleHD = () => {
+    if (!rawFile || isUploading || isCompressing) return;
+    if (isHD) {
+      // Chuyển lại chế độ Nén nhanh
+      if (compressedFile) {
+        setSelectedFile(compressedFile);
+      }
+      setIsHD(false);
+    } else {
+      // Chuyển sang chế độ Gốc HD
+      setSelectedFile(rawFile);
+      setIsHD(true);
+    }
+  };
+
   const handleRemoveFile = () => {
     if (previewUrl) {
       URL.revokeObjectURL(previewUrl);
     }
     setSelectedFile(null);
+    setRawFile(null);
+    setCompressedFile(null);
     setPreviewUrl(null);
     setUploadProgress(0);
+    setIsHD(false);
+    setCompressionInfo(null);
   };
 
   // Support pasting images directly (Ctrl+V)
-  const handlePaste = (e) => {
+  const handlePaste = async (e) => {
     const items = e.clipboardData?.items;
     if (!items) return;
 
@@ -138,8 +184,25 @@ export default function MessageInput({
             return;
           }
           if (previewUrl) URL.revokeObjectURL(previewUrl);
-          setSelectedFile(file);
+
+          setRawFile(file);
+          setIsHD(false);
           setPreviewUrl(URL.createObjectURL(file));
+
+          setIsCompressing(true);
+          try {
+            const compResult = await compressImage(file);
+            setCompressedFile(compResult.file);
+            setSelectedFile(compResult.file);
+            setCompressionInfo(compResult);
+          } catch (err) {
+            console.warn('Lỗi khi nén ảnh clipboard:', err);
+            setSelectedFile(file);
+            setCompressedFile(file);
+            setCompressionInfo(null);
+          } finally {
+            setIsCompressing(false);
+          }
           break;
         }
       }
@@ -183,7 +246,7 @@ export default function MessageInput({
             type: isImage ? 'IMAGE' : 'FILE',
             mediaUrl: uploadRes.secure_url,
             mediaType: selectedFile.type || 'application/octet-stream',
-            fileName: selectedFile.name,
+            fileName: rawFile?.name || selectedFile.name,
             fileSize: selectedFile.size,
             thumbUrl: isImage ? uploadRes.secure_url : null,
             replyToId: replyingTo?.id || null,
@@ -234,7 +297,7 @@ export default function MessageInput({
         if (inputRef.current) inputRef.current.focus();
       }
     },
-    [text, selectedFile, disabled, isUploading, replyingTo, onSendMessage, onTyping, onCancelReply]
+    [text, selectedFile, rawFile, isHD, disabled, isUploading, replyingTo, onSendMessage, onTyping, onCancelReply]
   );
 
   const handleKeyDown = (e) => {
@@ -288,8 +351,23 @@ export default function MessageInput({
               </div>
             )}
             <div className="file-preview-info">
-              <span className="file-preview-name">{selectedFile.name}</span>
-              <span className="file-preview-size">{formatFileSize(selectedFile.size)}</span>
+              <span className="file-preview-name">{rawFile?.name || selectedFile.name}</span>
+              <div className="file-preview-meta">
+                <span className="file-preview-size">{formatFileSize(selectedFile.size)}</span>
+                {isCompressing && (
+                  <span className="file-preview-saved-badge">Đang tối ưu ảnh...</span>
+                )}
+                {!isCompressing && compressionInfo?.wasCompressed && !isHD && (
+                  <span className="file-preview-saved-badge">
+                    ⚡ Giảm {Math.round((1 - compressionInfo.compressedSize / compressionInfo.originalSize) * 100)}% (Gửi nhanh)
+                  </span>
+                )}
+                {!isCompressing && isHD && rawFile?.type?.startsWith('image/') && (
+                  <span className="file-preview-hd-badge">
+                    ★ Chất lượng gốc HD
+                  </span>
+                )}
+              </div>
               {isUploading && (
                 <span className="file-preview-progress">
                   Đang tải lên... {uploadProgress}%
@@ -297,16 +375,30 @@ export default function MessageInput({
               )}
             </div>
           </div>
-          {!isUploading && (
-            <button
-              type="button"
-              className="file-preview-remove"
-              onClick={handleRemoveFile}
-              title="Xóa tệp đính kèm"
-            >
-              <X size={18} />
-            </button>
-          )}
+          <div className="file-preview-right">
+            {rawFile?.type?.startsWith('image/') && !isUploading && (
+              <button
+                type="button"
+                className={`btn-hd-toggle ${isHD ? 'active' : ''}`}
+                onClick={toggleHD}
+                title={isHD ? 'Đang chọn gửi ảnh gốc HD (Click để chuyển sang nén nhanh)' : 'Click để chuyển sang gửi ảnh chất lượng gốc HD'}
+                disabled={isCompressing}
+              >
+                <span>HD</span>
+                <span>{isHD ? 'Gốc' : 'Nhanh'}</span>
+              </button>
+            )}
+            {!isUploading && (
+              <button
+                type="button"
+                className="file-preview-remove"
+                onClick={handleRemoveFile}
+                title="Xóa tệp đính kèm"
+              >
+                <X size={18} />
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -334,14 +426,14 @@ export default function MessageInput({
         type="file"
         ref={imageInputRef}
         accept="image/*,video/*"
-        onChange={handleFileSelect}
+        onChange={(e) => handleFileSelect(e, true)}
         style={{ display: 'none' }}
       />
       <input
         type="file"
         ref={fileInputRef}
         accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.zip,.rar"
-        onChange={handleFileSelect}
+        onChange={(e) => handleFileSelect(e, false)}
         style={{ display: 'none' }}
       />
 
