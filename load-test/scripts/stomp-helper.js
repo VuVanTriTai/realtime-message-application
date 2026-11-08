@@ -64,23 +64,40 @@ function parseFrame(raw) {
 // ============================================================
 
 /**
- * Mo ket noi STOMP va giu ket noi trong holdDurationSeconds (chuan k6).
+ * Mo ket noi STOMP WebSocket da nang cho k6.
  * Tu dong gui heartbeat '\n' dinh ky moi 10s de server khong ngat session.
  *
- * @param {string}   token                - JWT token
- * @param {string[]} conversationIds      - Danh sach ID hoi thoai can subscribe
- * @param {number}   holdDurationSeconds  - Thoi gian giu ket noi (giay)
- * @param {function} onMessageCallback    - Callback khi nhan MESSAGE frame: (msg) => void
+ * @param {Object} config
+ * @param {string} config.token                - JWT token
+ * @param {string[]} [config.conversationIds]  - Danh sach ID hoi thoai can subscribe
+ * @param {number} [config.durationSeconds]    - Thoi luong giu ket noi (giay)
+ * @param {function} [config.onMessage]        - Callback khi nhan MESSAGE frame: (parsedMsg) => void
+ * @param {function} [config.onConnected]      - Callback khi STOMP CONNECTED: (socket, sendFrameFn) => void
  * @returns {object} res tu ws.connect
  */
-export function stompConnectAndHold(token, conversationIds, holdDurationSeconds, onMessageCallback) {
+export function stompSession({
+  token,
+  conversationIds = [],
+  durationSeconds = 60,
+  onMessage,
+  onConnected,
+}) {
   let subscriptionId = 0;
-  let heartbeatTimer = null;
 
   const res = ws.connect(
     WS_URL,
     { headers: { Authorization: `Bearer ${token}` } },
     function (socket) {
+      // Helper gui STOMP SEND frame truc tiep qua socket
+      const sendFrame = (destination, body) => {
+        const payload = typeof body === "string" ? body : JSON.stringify(body);
+        socket.send(buildFrame("SEND", {
+          destination,
+          "content-type": "application/json",
+          "content-length": String(payload.length),
+        }, payload));
+      };
+
       // 1. Khi socket TCP mo -> gui STOMP CONNECT frame
       socket.on("open", () => {
         socket.send(buildFrame("CONNECT", {
@@ -92,7 +109,7 @@ export function stompConnectAndHold(token, conversationIds, holdDurationSeconds,
 
       // 2. Nhan frame tu server
       socket.on("message", (data) => {
-        if (!data || data === "\n" || data.trim() === "") return; // heartbeat frame
+        if (!data || data === "\n" || data.trim() === "") return; // heartbeat
 
         const frame = parseFrame(data);
 
@@ -110,15 +127,20 @@ export function stompConnectAndHold(token, conversationIds, holdDurationSeconds,
           // Bat dau gui STOMP client heartbeat dinh ky (10 giay/lan)
           socket.setInterval(() => {
             try {
-              socket.send("\n"); // STOMP Heartbeat frame chi la ky tu xuong dong
+              socket.send("\n");
             } catch (_) {}
           }, 10000);
+
+          // Goi callback sau khi STOMP CONNECTED thanh cong
+          if (onConnected) {
+            onConnected(socket, sendFrame);
+          }
         } else if (frame.command === "MESSAGE") {
-          if (onMessageCallback) {
+          if (onMessage) {
             try {
-              onMessageCallback(frame.body ? JSON.parse(frame.body) : null);
+              onMessage(frame.body ? JSON.parse(frame.body) : null);
             } catch (_) {
-              onMessageCallback(frame.body);
+              onMessage(frame.body);
             }
           }
         }
@@ -130,7 +152,7 @@ export function stompConnectAndHold(token, conversationIds, holdDurationSeconds,
           socket.send(buildFrame("DISCONNECT", {}));
           socket.close();
         } catch (_) {}
-      }, holdDurationSeconds * 1000);
+      }, durationSeconds * 1000);
 
       socket.on("error", (e) => {
         console.error(`Socket error: ${e.error()}`);
@@ -139,6 +161,18 @@ export function stompConnectAndHold(token, conversationIds, holdDurationSeconds,
   );
 
   return res;
+}
+
+/**
+ * Mo ket noi STOMP va giu ket noi (wrapper tuong thich cho cac script idle hold)
+ */
+export function stompConnectAndHold(token, conversationIds, holdDurationSeconds, onMessageCallback) {
+  return stompSession({
+    token,
+    conversationIds,
+    durationSeconds: holdDurationSeconds,
+    onMessage: onMessageCallback,
+  });
 }
 
 /**
