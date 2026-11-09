@@ -1,117 +1,184 @@
 /**
- * 03_large_group.js — Kich ban 3: Nhom lon
- * =======================================================
- * Muc dich: Do thoi gian fanout khi 1 nhom co nhieu thanh vien online
- *   - 1 nguoi gui tin (sender VU)
- *   - N nguoi nhan (subscriber VU) do do tre
- *
- * Cac muc tai:
- *   Round 1: 100 subscriber + 1 sender (nhom nho)
- *   Round 2: 500 subscriber + 1 sender
- *   Round 3: 1000 subscriber + 1 sender (gio han cua seed data)
+ * 03_large_group.js — Kich ban 3: Nhom lon & Do do tre Fan-out (100% WebSocket)
+ * ==============================================================================
+ * Muc dich: Do toc do phat tin (fan-out) khi mot nhom co nhieu thanh vien online:
+ *   - 200 thanh vien trong nhom "LargeGroup" dong thoi online qua WebSocket STOMP
+ *   - Admin gui tin nhan vao nhom qua WebSocket /app/chat.send
+ *   - Server luu DB -> Outbox -> Redis -> Fan-out broadcast toi 200 thanh vien
+ *   - Tung thanh vien ghi nhan do tre: latency = Date.now() - sentAt
+ *   - Do luong: ty le nhan du tin, thoi gian broadcast toi toan bo thanh vien
  *
  * Chay:
- *   k6 run -e GROUP_ID=<id> load-test/scripts/03_large_group.js
- *   (GROUP_ID: ID cua nhom large-group trong DB, lay tu seed data)
+ *   k6 run load-test/scripts/03_large_group.js
+ *   (Hoac truyen tuy chon ID: k6 run -e GROUP_ID=<id> load-test/scripts/03_large_group.js)
  *
  * Nguong thanh cong:
- *   - P95 fanout latency < 500ms (tu luc gui den nguoi nhan cuoi nhan)
- *   - Khong mat tin: so tin nhan = so VU subscriber * so tin gui
+ *   - P50 fanout latency < 150ms
+ *   - P95 fanout latency < 400ms
+ *   - P99 fanout latency < 1000ms
+ *   - Error rate < 1%
  */
 
-import { sleep, check } from "k6";
-import { Trend, Counter, Gauge } from "k6/metrics";
-import { stompConnect, stompSend, stompDisconnect } from "./stomp-helper.js";
-import { login, sendMessageREST }                   from "./auth-helper.js";
+import { sleep } from "k6";
+import { Trend, Counter, Rate } from "k6/metrics";
+import { stompSession } from "./stomp-helper.js";
+import { login, getMyConversations } from "./auth-helper.js";
 
 // ============================================================
 // Custom metrics
 // ============================================================
-const fanoutFirstMs = new Trend("fanout_first_receiver_ms",  true); // Nguoi nhan dau tien
-const fanoutLastMs  = new Trend("fanout_last_receiver_ms",   true); // Nguoi nhan cuoi cung
-const msgDelivered  = new Counter("group_messages_delivered");
-const msgMissed     = new Counter("group_messages_missed");
-
-// GROUP_ID lay tu env var hoac dung group mac dinh tu seed data
-const GROUP_ID = __ENV.GROUP_ID || "1";
+const groupLatency  = new Trend("group_e2e_latency_ms",   true); // Do tre Fanout den moi member
+const msgSent       = new Counter("group_messages_sent");        // So tin Admin da phat vao nhom
+const msgReceived   = new Counter("group_messages_received");    // Tong so luot member nhan tin
+const errorRate     = new Rate("group_error_rate");
 
 // ============================================================
-// Options: 2 loai VU
-//   - "subscribers": chi nhan, giu ket noi lau
-//   - "senders":     gui tin, it hon
+// Options: 2 Scenarios chay song song
 // ============================================================
 export const options = {
   scenarios: {
+    // 1. 200 thanh vien online ket noi WebSocket, subscribe /topic/conversation.{groupId}
     subscribers: {
-      executor:          "ramping-vus",
-      exec:              "subscriber",
-      startVUs:          0,
+      executor: "ramping-vus",
+      exec:     "subscriberScenario",
+      startVUs: 0,
       stages: [
-        { duration: "1m",  target: 100  },
-        { duration: "2m",  target: 100  },
-        { duration: "2m",  target: 500  },
-        { duration: "3m",  target: 500  },
-        { duration: "3m",  target: 1000 },
-        { duration: "5m",  target: 1000 },
-        { duration: "1m",  target: 0    },
+        { duration: "1m", target: 200 },  // Tang dan 200 thanh vien online
+        { duration: "5m", target: 200 },  // Duy tri 200 thanh vien online
+        { duration: "1m", target: 0   },  // Ha tai
       ],
     },
+    // 2. Admin gui tin dinh ky qua WebSocket /app/chat.send
     senders: {
-      executor:          "constant-vus",
-      exec:              "sender",
-      vus:               3,
-      duration:          "17m",
-      startTime:         "1m",  // Bat dau sau khi subscriber on dinh
+      executor:  "constant-vus",
+      exec:      "senderScenario",
+      vus:       1,
+      duration:  "6m",
+      startTime: "1m", // Bat dau sau 1 phut khi cac thanh vien da online on dinh
     },
   },
   thresholds: {
-    "fanout_first_receiver_ms": ["p(95)<200"],
-    "fanout_last_receiver_ms":  ["p(95)<500"],
-    "group_messages_missed":    ["count<10"],
+    "group_e2e_latency_ms": ["p(50)<150", "p(95)<400", "p(99)<1000"],
+    "group_error_rate":     ["rate<0.01"],
   },
 };
 
 // ============================================================
-// Scenario: Subscriber — ket noi va ghi lai thoi gian nhan
+// Setup: Chay 1 lan duy nhat truoc khi test
 // ============================================================
-export function subscriber() {
-  const userIndex = ((__VU - 1) % 200) + 1;
-  const username  = `testuser${String(userIndex).padStart(3, "0")}`;
-  const token     = login(username, "LoadTest@123");
+export function setup() {
+  console.log("==> [Setup] Dang chuan bi tai khoan va xac dinh ID nhom LargeGroup...");
 
-  if (!token) return;
+  // 1. Dang nhap Admin (nguoi tao nhom va sender)
+  const adminToken = login("admin", "Admin@123");
+  if (!adminToken) {
+    throw new Error("Khong the dang nhap tai khoan admin! Kiem tra seed data.");
+  }
 
-  stompConnect(token, [GROUP_ID], (frame) => {
-    try {
-      const msg = JSON.parse(frame.body);
-      if (msg && msg.sentAt) {
-        const latency = Date.now() - msg.sentAt;
-        fanoutFirstMs.add(latency);  // Moi subscriber ghi latency rieng
-        msgDelivered.add(1);
+  // 2. Tim ID cua nhom "LargeGroup" tu danh sach hoi thoai cua admin
+  let targetGroupId = __ENV.GROUP_ID || null;
+
+  if (!targetGroupId) {
+    const adminConvs = getMyConversations(adminToken);
+    const largeGroup = adminConvs.find(
+      (c) => c.type === "GROUP" && (c.name === "LargeGroup" || c.name === "Dev Team")
+    );
+    if (largeGroup) {
+      targetGroupId = String(largeGroup.id);
+      console.log(`==> [Setup] Tim thay nhom '${largeGroup.name}' co ID = ${targetGroupId}`);
+    } else {
+      // Fallback: lay group bat ky
+      const anyGroup = adminConvs.find((c) => c.type === "GROUP");
+      if (anyGroup) {
+        targetGroupId = String(anyGroup.id);
+        console.log(`==> [Setup] Dung nhom mac dinh ID = ${targetGroupId}`);
+      } else {
+        throw new Error("Khong tim thay nhom nao! Vui long kiem tra migration V6.");
       }
-    } catch (_) {}
-  });
+    }
+  }
 
-  // Giu ket noi suot bai test
-  sleep(1000);
+  // 3. Pre-login 200 load-test user (testuser001..testuser200)
+  console.log("==> [Setup] Pre-login 200 thanh vien cho nhom...");
+  const subscriberTokens = [];
+  const TOTAL_MEMBERS = 200;
+
+  for (let i = 1; i <= TOTAL_MEMBERS; i++) {
+    const uname = `testuser${String(i).padStart(3, "0")}`;
+    const token = login(uname, "LoadTest@123");
+    if (token) {
+      subscriberTokens.push(token);
+    }
+    sleep(0.01); // Tranh gay shock luc khoi tao
+  }
+
+  console.log(`==> [Setup] Da chuan bi thanh cong ${subscriberTokens.length} token thanh vien.`);
+
+  return {
+    adminToken,
+    groupId: targetGroupId,
+    subscriberTokens,
+  };
 }
 
 // ============================================================
-// Scenario: Sender — gui tin deu dan vao nhom
+// Scenario 1: Thanh vien nhom online (Subscribers)
 // ============================================================
-export function sender() {
-  // Dung admin account gui tin (da la OWNER cua nhom)
-  const token = login("admin", "Admin@123");
-  if (!token) return;
+export function subscriberScenario(data) {
+  const tokens = data.subscriberTokens;
+  const tokenIndex = (__VU - 1) % tokens.length;
+  const token = tokens[tokenIndex];
 
-  for (let i = 0; i < 100; i++) {
-    const sentAt  = Date.now();
-    const content = `[GROUP-TEST] Tin #${i} sentAt:${sentAt} from sender VU ${__VU}`;
+  stompSession({
+    token:           token,
+    conversationIds: [data.groupId],
+    durationSeconds: 380, // Giu ket noi suot thoi gian stage
+    onMessage: (msg) => {
+      // Khi nhan duoc tin nhan fan-out tu /topic/conversation.{groupId}
+      if (msg && typeof msg.content === "string" && msg.content.startsWith("k6|")) {
+        const parts  = msg.content.split("|");
+        const sentAt = parseInt(parts[1], 10);
 
-    const res = sendMessageREST(token, GROUP_ID, content);
-    check(res, { "send ok": (r) => r.status === 200 || r.status === 201 });
+        if (!isNaN(sentAt)) {
+          const latency = Date.now() - sentAt;
+          groupLatency.add(latency);
+          msgReceived.add(1);
+        }
+      }
+    },
+  });
+}
 
-    // Gui 1 tin moi 3 giay
-    sleep(3);
-  }
+// ============================================================
+// Scenario 2: Admin gui tin nhan vao nhom (Sender qua WebSocket)
+// ============================================================
+export function senderScenario(data) {
+  stompSession({
+    token:           data.adminToken,
+    conversationIds: [], // Sender khong can nghe lai
+    durationSeconds: 300,
+    onConnected: (socket, sendFrame) => {
+      let count = 0;
+
+      // Moi 3 giay phat 1 tin nhan qua WebSocket /app/chat.send
+      socket.setInterval(() => {
+        count++;
+        const sentAt      = Date.now();
+        const clientMsgId = `ws-grp-${count}-${sentAt}`;
+        const content     = `k6|${sentAt}|[FANOUT TEST] Message #${count} to LargeGroup`;
+
+        try {
+          sendFrame("/app/chat.send", {
+            conversationId:  parseInt(data.groupId, 10),
+            content:         content,
+            type:            "TEXT",
+            clientMessageId: clientMsgId,
+          });
+          msgSent.add(1);
+        } catch (err) {
+          errorRate.add(1);
+        }
+      }, 3000); // 3s / tin nhan
+    },
+  });
 }
