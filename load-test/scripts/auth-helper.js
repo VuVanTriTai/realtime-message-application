@@ -61,7 +61,7 @@ export function login(username, password) {
  * @returns {object[]} mang conversation
  */
 export function getMyConversations(token) {
-  const res = http.get(`${API_URL}/api/conversations/me`, {
+  const res = http.get(`${API_URL}/api/conversations`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (res.status !== 200) return [];
