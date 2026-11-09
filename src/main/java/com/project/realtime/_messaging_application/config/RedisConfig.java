@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.project.realtime._messaging_application.websocket.pubsub.RedisMessageSubscriber;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -13,6 +14,8 @@ import org.springframework.data.redis.listener.PatternTopic;
 import org.springframework.data.redis.listener.RedisMessageListenerContainer;
 import org.springframework.data.redis.listener.adapter.MessageListenerAdapter;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
+
+import java.util.concurrent.Executor;
 
 @Configuration
 public class RedisConfig {
@@ -89,10 +92,12 @@ public class RedisConfig {
     @Bean
     public RedisMessageListenerContainer redisMessageListenerContainer(
             RedisConnectionFactory connectionFactory,
-            MessageListenerAdapter listenerAdapter) {
+            MessageListenerAdapter listenerAdapter,
+            @Qualifier("taskExecutor") Executor taskExecutor) {
 
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
+        container.setTaskExecutor(taskExecutor);
 
         // Subscribe pattern – nhận tất cả event của mọi conversation
         container.addMessageListener(listenerAdapter, new PatternTopic(CHAT_CHANNEL_PATTERN));

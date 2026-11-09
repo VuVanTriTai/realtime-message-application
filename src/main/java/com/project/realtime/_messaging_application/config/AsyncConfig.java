@@ -59,12 +59,12 @@ public class AsyncConfig implements SchedulingConfigurer {
      * CallerRunsPolicy: khi queue day va da dat max → STOMP thread tu chay
      * thay vi nem RejectedExecutionException (mat ket noi client).
      */
-    @Bean(name = "taskExecutor")
+    @Bean(name = {"taskExecutor", "applicationTaskExecutor"})
     public Executor taskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(50);
+        executor.setCorePoolSize(64);
         executor.setMaxPoolSize(200);
-        executor.setQueueCapacity(500);
+        executor.setQueueCapacity(1000);
         executor.setThreadNamePrefix("chat-worker-");
         executor.setRejectedExecutionHandler(
                 new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
