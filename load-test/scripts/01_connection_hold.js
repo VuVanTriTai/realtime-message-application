@@ -23,7 +23,7 @@ import { Trend, Counter } from "k6/metrics";
 // ============================================================
 // Custom metrics
 // ============================================================
-const connectTime  = new Trend("ws_connect_time_ms", true);
+const connectTime = new Trend("ws_connect_time_ms", true);
 const connectFails = new Counter("ws_connect_fails");
 
 // ============================================================
@@ -31,19 +31,19 @@ const connectFails = new Counter("ws_connect_fails");
 // ============================================================
 export const options = {
   stages: [
-    { duration: "2m",  target: 1000  },   // Tang len 1K trong 2 phut
-    { duration: "3m",  target: 1000  },   // Giu 1K trong 3 phut
-    { duration: "3m",  target: 5000  },   // Tang len 5K
-    { duration: "3m",  target: 5000  },   // Giu 5K
-    { duration: "3m",  target: 10000 },   // Tang len 10K
-    { duration: "5m",  target: 10000 },   // Giu 10K (do GC o day)
-    { duration: "2m",  target: 15000 },   // Tang len 15K
-    { duration: "5m",  target: 15000 },   // Giu 15K — dinh tong the
-    { duration: "2m",  target: 0     },   // Giam ve 0
+    { duration: "2m", target: 1000 },   // Tang len 1K trong 2 phut
+    { duration: "3m", target: 1000 },   // Giu 1K trong 3 phut
+    { duration: "3m", target: 5000 },   // Tang len 5K
+    { duration: "3m", target: 5000 },   // Giu 5K
+    { duration: "3m", target: 10000 },   // Tang len 10K
+    { duration: "5m", target: 10000 },   // Giu 10K (do GC o day)
+    { duration: "2m", target: 15000 },   // Tang len 15K
+    { duration: "5m", target: 15000 },   // Giu 15K — dinh tong the
+    { duration: "2m", target: 0 },   // Giam ve 0
   ],
   thresholds: {
     "ws_connect_time_ms": ["p(95)<500"], // 95% ket noi < 500ms
-    "ws_connect_fails":   ["count<100"], // Toi da 100 loi ket noi
+    "ws_connect_fails": ["count<100"], // Toi da 100 loi ket noi
   },
 };
 
@@ -88,7 +88,7 @@ export default function (data) {
 
   // 2. Ket noi WebSocket, gui STOMP CONNECT va giu ket noi 300 giay (5 phut)
   // Trong 300s nay, client tu dong ban STOMP Heartbeat '\n' moi 10 giay
-  const holdSeconds = 300;
+  const holdSeconds = 1800;
   const res = stompConnectAndHold(token, [], holdSeconds, null);
 
   const duration = Date.now() - startTime;

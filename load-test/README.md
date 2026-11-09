@@ -130,3 +130,4 @@ SELECT id FROM conversations WHERE type = 'GROUP' AND name = 'LargeGroup';
 - **Windows**: Chỉnh `max connections` ở HKLM\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters
 - **Soak test (07)**: Chạy với `k6 run --no-vu-connection-reuse` để tránh pool cache
 - k6 mặc định 1 VU = 1 goroutine nhẹ (không phải thread) → có thể chạy 15K VU trên máy 16GB RAM
+
