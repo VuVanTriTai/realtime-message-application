@@ -13,12 +13,14 @@ import com.project.realtime._messaging_application.modules.Message.repository.Me
 import com.project.realtime._messaging_application.modules.Message.repository.MessageRepository;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.modules.User.repository.UserRepository;
+import com.project.realtime._messaging_application.websocket.pubsub.OutboxTriggerEvent;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +43,7 @@ public class MessageService {
     private final UserRepository userRepo;
     private final MessageOutboxRepository outboxRepo;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
     // Metrics
     private final Counter messagesSentCounter;
     private final Timer   messageLatencyTimer;
@@ -51,6 +54,7 @@ public class MessageService {
             UserRepository userRepo,
             MessageOutboxRepository outboxRepo,
             ObjectMapper objectMapper,
+            ApplicationEventPublisher eventPublisher,
             Counter messagesSentCounter,
             Timer messageLatencyTimer) {
         this.messageRepo          = messageRepo;
@@ -59,6 +63,7 @@ public class MessageService {
         this.userRepo             = userRepo;
         this.outboxRepo           = outboxRepo;
         this.objectMapper         = objectMapper;
+        this.eventPublisher       = eventPublisher;
         this.messagesSentCounter  = messagesSentCounter;
         this.messageLatencyTimer  = messageLatencyTimer;
     }
@@ -183,6 +188,7 @@ public class MessageService {
         try {
             String payloadJson = objectMapper.writeValueAsString(response);
             outboxRepo.save(new MessageOutbox(message.getId(), conversation.getId(), payloadJson));
+            eventPublisher.publishEvent(new OutboxTriggerEvent());
         } catch (JsonProcessingException e) {
             // Serialize thất bại = không thể publish realtime, nhưng tin đã lưu DB
             // Throw để rollback toàn bộ transaction (đảm bảo consistency)
@@ -218,6 +224,7 @@ public class MessageService {
         try {
             String payloadJson = objectMapper.writeValueAsString(response);
             outboxRepo.save(new MessageOutbox(m.getId(), m.getConversation().getId(), payloadJson));
+            eventPublisher.publishEvent(new OutboxTriggerEvent());
         } catch (JsonProcessingException e) {
             log.warn("Không thể serialize edited message cho outbox: {}", e.getMessage());
         }
@@ -244,6 +251,7 @@ public class MessageService {
         try {
             String payloadJson = objectMapper.writeValueAsString(response);
             outboxRepo.save(new MessageOutbox(m.getId(), m.getConversation().getId(), payloadJson));
+            eventPublisher.publishEvent(new OutboxTriggerEvent());
         } catch (JsonProcessingException e) {
             log.warn("Không thể serialize deleted message cho outbox: {}", e.getMessage());
         }

@@ -65,6 +65,9 @@ class MessageServiceTest {
     private ObjectMapper objectMapper;
 
     @Mock
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
+
+    @Mock
     private Counter messagesSentCounter;   // Micrometer counter mock
 
     @Mock
