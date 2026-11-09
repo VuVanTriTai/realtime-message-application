@@ -136,10 +136,19 @@ public class ChatWebSocketHandler {
         // --- Submit viec nang sang chat-worker-* (khong block STOMP thread) ---
         taskExecutor.execute(() -> {
             try {
-                // Luu Message + MessageOutbox trong 1 transaction
-                messageService.sendMessage(userId, req);
+                // 1. Luu Message + MessageOutbox (PENDING) trong 1 transaction DB
+                MessageResponse saved = messageService.sendMessage(userId, req);
 
-                log.debug("[chat-worker] Message saved: conversation={} sender={}",
+                // 2. [Fast Path] Publish truc tiep sang Redis Pub/Sub (< 1ms, E2E ~15ms)
+                try {
+                    redisPublisher.publish(saved.conversationId(), RedisEventType.NEW_MESSAGE, saved);
+                    messageService.markOutboxDone(saved.id());
+                } catch (Exception pubEx) {
+                    log.warn("[FastPath] Publish failed for msgId={}, OutboxPoller will rescue: {}",
+                            saved.id(), pubEx.getMessage());
+                }
+
+                log.debug("[chat-worker] Message saved and fast-path dispatched: conversation={} sender={}",
                         req.conversationId(), username);
 
             } catch (Exception e) {

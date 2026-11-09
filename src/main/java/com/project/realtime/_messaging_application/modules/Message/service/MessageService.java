@@ -22,13 +22,9 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -48,9 +44,6 @@ public class MessageService {
     private final UserRepository userRepo;
     private final MessageOutboxRepository outboxRepo;
     private final ObjectMapper objectMapper;
-    private final ApplicationEventPublisher eventPublisher;
-    private final RedisMessagePublisher redisPublisher;
-    private final TransactionTemplate transactionTemplate;
     // Metrics
     private final Counter messagesSentCounter;
     private final Timer   messageLatencyTimer;
@@ -61,9 +54,6 @@ public class MessageService {
             UserRepository userRepo,
             MessageOutboxRepository outboxRepo,
             ObjectMapper objectMapper,
-            ApplicationEventPublisher eventPublisher,
-            RedisMessagePublisher redisPublisher,
-            TransactionTemplate transactionTemplate,
             Counter messagesSentCounter,
             Timer messageLatencyTimer) {
         this.messageRepo          = messageRepo;
@@ -72,9 +62,6 @@ public class MessageService {
         this.userRepo             = userRepo;
         this.outboxRepo           = outboxRepo;
         this.objectMapper         = objectMapper;
-        this.eventPublisher       = eventPublisher;
-        this.redisPublisher       = redisPublisher;
-        this.transactionTemplate  = transactionTemplate;
         this.messagesSentCounter  = messagesSentCounter;
         this.messageLatencyTimer  = messageLatencyTimer;
     }
@@ -192,15 +179,10 @@ public class MessageService {
 
         MessageResponse response = MessageResponse.fromEntity(message);
 
-        // 7. [OUTBOX + FAST PATH]
-        // Ghi outbox record TRONG CÙNG transaction với message để đảm bảo không mất tin.
-        // Ngay sau khi transaction commit thành công: bắn Fast Path trực tiếp sang Redis (< 2ms).
-        // Nếu Fast Path thành công -> đánh dấu Outbox DONE ngay lập tức.
-        // Nếu mạng Redis lỗi -> Outbox giữ PENDING và OutboxPoller sẽ bốc cứu hộ sau 3s (Zero Loss).
+        // 7. [OUTBOX] Ghi outbox record TRONG CÙNG transaction với message để đảm bảo không mất tin.
         try {
             String payloadJson = objectMapper.writeValueAsString(response);
             outboxRepo.save(new MessageOutbox(message.getId(), conversation.getId(), payloadJson));
-            dispatchFastPath(conversation.getId(), message.getId(), RedisEventType.NEW_MESSAGE, payloadJson);
         } catch (JsonProcessingException e) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "Không thể serialize message cho outbox: " + e.getMessage());
@@ -234,7 +216,6 @@ public class MessageService {
         try {
             String payloadJson = objectMapper.writeValueAsString(response);
             outboxRepo.save(new MessageOutbox(m.getId(), m.getConversation().getId(), payloadJson));
-            dispatchFastPath(m.getConversation().getId(), m.getId(), RedisEventType.NEW_MESSAGE, payloadJson);
         } catch (JsonProcessingException e) {
             log.warn("Không thể serialize edited message cho outbox: {}", e.getMessage());
         }
@@ -261,36 +242,20 @@ public class MessageService {
         try {
             String payloadJson = objectMapper.writeValueAsString(response);
             outboxRepo.save(new MessageOutbox(m.getId(), m.getConversation().getId(), payloadJson));
-            dispatchFastPath(m.getConversation().getId(), m.getId(), RedisEventType.NEW_MESSAGE, payloadJson);
         } catch (JsonProcessingException e) {
             log.warn("Không thể serialize deleted message cho outbox: {}", e.getMessage());
         }
     }
 
     /**
-     * Fast Path: Bắn trực tiếp qua Redis Pub/Sub ngay sau khi Transaction commit thành công.
-     * Giảm độ trễ E2E xuống < 20ms mà vẫn giữ trọn vẹn độ tin cậy của Outbox Pattern.
+     * Fast Path: Đánh dấu DONE cho bản ghi outbox sau khi đã publish thành công qua Redis.
      */
-    private void dispatchFastPath(Long conversationId, Long messageId, RedisEventType eventType, String payloadJson) {
-        Runnable action = () -> {
-            try {
-                redisPublisher.publishRaw(conversationId, eventType, payloadJson);
-                transactionTemplate.executeWithoutResult(status -> outboxRepo.markDoneByMessageId(messageId));
-                log.debug("[FastPath] Dispatched {} msgId={} to convId={}", eventType, messageId, conversationId);
-            } catch (Exception e) {
-                log.warn("[FastPath] Failed for msgId={}, OutboxPoller will rescue: {}", messageId, e.getMessage());
-            }
-        };
-
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    action.run();
-                }
-            });
-        } else {
-            action.run();
+    @Transactional
+    public void markOutboxDone(Long messageId) {
+        try {
+            outboxRepo.markDoneByMessageId(messageId);
+        } catch (Exception e) {
+            log.warn("Khong the danh dau outbox DONE cho msgId={}: {}", messageId, e.getMessage());
         }
     }
 
