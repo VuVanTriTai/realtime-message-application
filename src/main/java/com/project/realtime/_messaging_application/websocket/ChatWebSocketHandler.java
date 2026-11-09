@@ -1,6 +1,7 @@
 package com.project.realtime._messaging_application.websocket;
 
 import com.project.realtime._messaging_application.common.ratelimit.WebSocketRateLimiterService;
+import com.project.realtime._messaging_application.modules.Message.dto.MessageResponse;
 import com.project.realtime._messaging_application.modules.Message.dto.SendMessageRequest;
 import com.project.realtime._messaging_application.modules.Message.service.MessageService;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
