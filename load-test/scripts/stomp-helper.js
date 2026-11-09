@@ -29,7 +29,7 @@ export const API_URL = __ENV.API_URL || "http://localhost:8080";
 // STOMP frame builder
 // ============================================================
 
-function buildFrame(command, headers, body) {
+export function buildFrame(command, headers, body) {
   let frame = command + "\n";
   for (const [k, v] of Object.entries(headers || {})) {
     frame += `${k}:${v}\n`;
@@ -40,7 +40,7 @@ function buildFrame(command, headers, body) {
   return frame;
 }
 
-function parseFrame(raw) {
+export function parseFrame(raw) {
   const nullIdx = raw.indexOf("\0");
   const content = nullIdx >= 0 ? raw.substring(0, nullIdx) : raw;
   const lines   = content.split("\n");
