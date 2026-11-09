@@ -26,10 +26,10 @@ import { login, getMyConversations } from "./auth-helper.js";
 // ============================================================
 // Custom metrics
 // ============================================================
-const e2eLatency  = new Trend("e2e_message_latency_ms", true); // Do tre End-to-End (ms)
-const msgSent     = new Counter("messages_sent_total");        // Tong so tin User A da gui
+const e2eLatency = new Trend("e2e_message_latency_ms", true); // Do tre End-to-End (ms)
+const msgSent = new Counter("messages_sent_total");        // Tong so tin User A da gui
 const msgReceived = new Counter("messages_received_total");    // Tong so tin User B da nhan
-const errorRate   = new Rate("message_error_rate");
+const errorRate = new Rate("message_error_rate");
 
 // ============================================================
 // Scenarios: 2 nhom VU chay song song
@@ -39,22 +39,22 @@ export const options = {
     // 1. Nhom Nguoi nhan (User B): Mo WebSocket truoc, ngoi nghe tin
     receivers: {
       executor: "constant-vus",
-      exec:     "receiverScenario",
-      vus:      50,          // 50 nguoi nhan cho 50 cap 1-1
+      exec: "receiverScenario",
+      vus: 50,          // 50 nguoi nhan cho 50 cap 1-1
       duration: "5m",
     },
     // 2. Nhom Nguoi gui (User A): Mo WebSocket, gui tin dinh ky qua /app/chat.send
     senders: {
-      executor:  "constant-vus",
-      exec:      "senderScenario",
-      vus:       50,          // 50 nguoi gui tuong ung
-      duration:  "5m",
+      executor: "constant-vus",
+      exec: "senderScenario",
+      vus: 50,          // 50 nguoi gui tuong ung
+      duration: "5m",
       startTime: "5s",        // Khoi dong sau 5s de nguoi nhan da subscribe on dinh
     },
   },
   thresholds: {
     "e2e_message_latency_ms": ["p(50)<100", "p(95)<300", "p(99)<1000"],
-    "message_error_rate":     ["rate<0.01"],
+    "message_error_rate": ["rate<0.01"],
   },
 };
 
@@ -67,7 +67,7 @@ export function setup() {
   const TOTAL_PAIRS = 50; // testuser001..100 (50 cap 1-1 co san trong V6 seed)
 
   for (let i = 1; i <= TOTAL_PAIRS; i++) {
-    const senderName   = `testuser${String(2 * i - 1).padStart(3, "0")}`;
+    const senderName = `testuser${String(2 * i - 1).padStart(3, "0")}`;
     const receiverName = `testuser${String(2 * i).padStart(3, "0")}`;
 
     const tokenA = login(senderName, "LoadTest@123");
@@ -84,11 +84,11 @@ export function setup() {
 
     if (directConv) {
       pairs.push({
-        pairIndex:     i,
-        convId:        directConv.id,
-        senderName:    senderName,
-        receiverName:  receiverName,
-        senderToken:   tokenA,
+        pairIndex: i,
+        convId: directConv.id,
+        senderName: senderName,
+        receiverName: receiverName,
+        senderToken: tokenA,
         receiverToken: tokenB,
       });
     }
@@ -111,13 +111,13 @@ export function receiverScenario(data) {
   const pair = data.pairs[(__VU - 1) % data.pairs.length];
 
   stompSession({
-    token:           pair.receiverToken,
+    token: pair.receiverToken,
     conversationIds: [pair.convId],
     durationSeconds: 295,
     onMessage: (msg) => {
       // Tin nhan broadcast ve tu /topic/conversation.{convId}
       if (msg && typeof msg.content === "string" && msg.content.startsWith("k6|")) {
-        const parts  = msg.content.split("|");
+        const parts = msg.content.split("|");
         const sentAt = parseInt(parts[1], 10);
 
         if (!isNaN(sentAt)) {
@@ -137,21 +137,21 @@ export function senderScenario(data) {
   const pair = data.pairs[(__VU - 1) % data.pairs.length];
 
   stompSession({
-    token:           pair.senderToken,
+    token: pair.senderToken,
     conversationIds: [], // Sender chi gui, khong can lang nghe
     durationSeconds: 290,
     onConnected: (socket, sendFrame) => {
       // Dinh ky moi 2.5 giay ban 1 tin nhan qua WebSocket destination: /app/chat.send
       socket.setInterval(() => {
-        const sentAt      = Date.now();
+        const sentAt = Date.now();
         const clientMsgId = `ws-k6-${__VU}-${sentAt}`;
-        const content     = `k6|${sentAt}|Ping from ${pair.senderName}`;
+        const content = `k6|${sentAt}|Ping from ${pair.senderName}`;
 
         try {
           sendFrame("/app/chat.send", {
-            conversationId:  pair.convId,
-            content:         content,
-            type:            "TEXT",
+            conversationId: pair.convId,
+            content: content,
+            type: "TEXT",
             clientMessageId: clientMsgId,
           });
           msgSent.add(1);

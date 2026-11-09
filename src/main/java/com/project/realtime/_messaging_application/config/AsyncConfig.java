@@ -62,9 +62,9 @@ public class AsyncConfig implements SchedulingConfigurer {
     @Bean(name = {"taskExecutor", "applicationTaskExecutor"})
     public Executor taskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(64);
-        executor.setMaxPoolSize(200);
-        executor.setQueueCapacity(1000);
+        executor.setCorePoolSize(100);
+        executor.setMaxPoolSize(300);
+        executor.setQueueCapacity(2000);
         executor.setThreadNamePrefix("chat-worker-");
         executor.setRejectedExecutionHandler(
                 new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());

@@ -121,7 +121,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     public void configureClientInboundChannel(ChannelRegistration registration) {
         registration
                 .interceptors(authInterceptor)
-                .taskExecutor(buildExecutor("stomp-inbound-", 64, 128, 500));
+                .taskExecutor(buildExecutor("stomp-inbound-", 100, 200, 1000));
     }
 
     /**
@@ -134,7 +134,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
      */
     @Override
     public void configureClientOutboundChannel(ChannelRegistration registration) {
-        registration.taskExecutor(buildExecutor("stomp-outbound-", 64, 128, 500));
+        registration.taskExecutor(buildExecutor("stomp-outbound-", 100, 200, 1000));
     }
 
     // ================================================================
