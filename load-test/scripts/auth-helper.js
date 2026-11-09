@@ -37,8 +37,14 @@ export function login(username, password) {
   );
 
   check(res, {
-    "login 200": (r) => r.status === 200,
-    "has token":  (r) => !!r.json("accessToken"),
+    "login 200": (r) => r && r.status === 200,
+    "has token":  (r) => {
+      try {
+        return !!(r && r.status === 200 && r.json && r.json("accessToken"));
+      } catch (_) {
+        return false;
+      }
+    },
   });
 
   if (res.status !== 200) {
