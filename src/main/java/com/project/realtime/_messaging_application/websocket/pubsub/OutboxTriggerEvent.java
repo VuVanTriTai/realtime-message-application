@@ -6,3 +6,4 @@ package com.project.realtime._messaging_application.websocket.pubsub;
  */
 public record OutboxTriggerEvent() {
 }
+

@@ -143,9 +143,16 @@ public class OutboxPoller {
                 return 0;
             }
 
-            log.debug("[Outbox] Processing {} PENDING records", pending.size());
+            log.info("[Outbox-Rescue] Rescuing {} un-dispatched PENDING records", pending.size());
+            List<Long> doneIds = new java.util.ArrayList<>();
             for (MessageOutbox item : pending) {
-                processItem(item);
+                if (processItem(item)) {
+                    doneIds.add(item.getId());
+                }
+            }
+
+            if (!doneIds.isEmpty()) {
+                outboxRepo.markAllDone(doneIds);
             }
             return pending.size();
         });
@@ -168,9 +175,9 @@ public class OutboxPoller {
     }
 
     /**
-     * Xu ly 1 outbox item: publish Redis, cap nhat trang thai DONE/FAILED.
+     * Xu ly 1 outbox item: publish Redis. Tra ve true neu thanh cong de batch update.
      */
-    private void processItem(MessageOutbox item) {
+    private boolean processItem(MessageOutbox item) {
         try {
             // Do thoi gian tin nhan nam cho trong hang doi outbox
             if (item.getCreatedAt() != null) {
@@ -183,16 +190,24 @@ public class OutboxPoller {
                     RedisEventType.NEW_MESSAGE,
                     item.getPayload());
 
-            item.markDone();
-            outboxRepo.save(item);
-
-            log.debug("[Outbox] Published and marked DONE: outboxId={} msgId={}",
-                    item.getId(), item.getMessageId());
+            return true;
 
         } catch (Exception e) {
             item.incrementRetry();
 
             if (item.getRetryCount() >= MAX_RETRY_COUNT) {
+                item.markFailed();
+                log.error("[Outbox] Marked FAILED after {} retries: outboxId={} msgId={} error={}",
+                        MAX_RETRY_COUNT, item.getId(), item.getMessageId(), e.getMessage());
+            } else {
+                log.warn("[Outbox] Retry {}/{} for outboxId={}: {}",
+                        item.getRetryCount(), MAX_RETRY_COUNT, item.getId(), e.getMessage());
+            }
+
+            outboxRepo.save(item);
+            return false;
+        }
+    }
                 item.markFailed();
                 log.error("[Outbox] Marked FAILED after {} retries: outboxId={} msgId={} error={}",
                         MAX_RETRY_COUNT, item.getId(), item.getMessageId(), e.getMessage());

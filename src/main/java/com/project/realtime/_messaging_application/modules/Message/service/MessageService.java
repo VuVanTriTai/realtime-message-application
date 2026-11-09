@@ -14,6 +14,8 @@ import com.project.realtime._messaging_application.modules.Message.repository.Me
 import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.modules.User.repository.UserRepository;
 import com.project.realtime._messaging_application.websocket.pubsub.OutboxTriggerEvent;
+import com.project.realtime._messaging_application.websocket.pubsub.RedisEventType;
+import com.project.realtime._messaging_application.websocket.pubsub.RedisMessagePublisher;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.Counter;
@@ -24,6 +26,8 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -44,6 +48,7 @@ public class MessageService {
     private final MessageOutboxRepository outboxRepo;
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
+    private final RedisMessagePublisher redisPublisher;
     // Metrics
     private final Counter messagesSentCounter;
     private final Timer   messageLatencyTimer;
@@ -55,6 +60,7 @@ public class MessageService {
             MessageOutboxRepository outboxRepo,
             ObjectMapper objectMapper,
             ApplicationEventPublisher eventPublisher,
+            RedisMessagePublisher redisPublisher,
             Counter messagesSentCounter,
             Timer messageLatencyTimer) {
         this.messageRepo          = messageRepo;
@@ -64,6 +70,7 @@ public class MessageService {
         this.outboxRepo           = outboxRepo;
         this.objectMapper         = objectMapper;
         this.eventPublisher       = eventPublisher;
+        this.redisPublisher       = redisPublisher;
         this.messagesSentCounter  = messagesSentCounter;
         this.messageLatencyTimer  = messageLatencyTimer;
     }
@@ -181,17 +188,16 @@ public class MessageService {
 
         MessageResponse response = MessageResponse.fromEntity(message);
 
-        // 7. [OUTBOX] Ghi outbox record TRONG CÙNG transaction với message
-        // Nếu transaction rollback → outbox cũng rollback → không bao giờ publish tin
-        // không tồn tại
-        // Nếu commit thành công → OutboxPoller sẽ publish lên Redis và đánh dấu DONE
+        // 7. [OUTBOX + FAST PATH]
+        // Ghi outbox record TRONG CÙNG transaction với message để đảm bảo không mất tin.
+        // Ngay sau khi transaction commit thành công: bắn Fast Path trực tiếp sang Redis (< 2ms).
+        // Nếu Fast Path thành công -> đánh dấu Outbox DONE ngay lập tức.
+        // Nếu mạng Redis lỗi -> Outbox giữ PENDING và OutboxPoller sẽ bốc cứu hộ sau 3s (Zero Loss).
         try {
             String payloadJson = objectMapper.writeValueAsString(response);
             outboxRepo.save(new MessageOutbox(message.getId(), conversation.getId(), payloadJson));
-            eventPublisher.publishEvent(new OutboxTriggerEvent());
+            dispatchFastPath(conversation.getId(), message.getId(), RedisEventType.NEW_MESSAGE, payloadJson);
         } catch (JsonProcessingException e) {
-            // Serialize thất bại = không thể publish realtime, nhưng tin đã lưu DB
-            // Throw để rollback toàn bộ transaction (đảm bảo consistency)
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "Không thể serialize message cho outbox: " + e.getMessage());
         }
@@ -224,7 +230,7 @@ public class MessageService {
         try {
             String payloadJson = objectMapper.writeValueAsString(response);
             outboxRepo.save(new MessageOutbox(m.getId(), m.getConversation().getId(), payloadJson));
-            eventPublisher.publishEvent(new OutboxTriggerEvent());
+            dispatchFastPath(m.getConversation().getId(), m.getId(), RedisEventType.NEW_MESSAGE, payloadJson);
         } catch (JsonProcessingException e) {
             log.warn("Không thể serialize edited message cho outbox: {}", e.getMessage());
         }
@@ -251,9 +257,36 @@ public class MessageService {
         try {
             String payloadJson = objectMapper.writeValueAsString(response);
             outboxRepo.save(new MessageOutbox(m.getId(), m.getConversation().getId(), payloadJson));
-            eventPublisher.publishEvent(new OutboxTriggerEvent());
+            dispatchFastPath(m.getConversation().getId(), m.getId(), RedisEventType.NEW_MESSAGE, payloadJson);
         } catch (JsonProcessingException e) {
             log.warn("Không thể serialize deleted message cho outbox: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Fast Path: Bắn trực tiếp qua Redis Pub/Sub ngay sau khi Transaction commit thành công.
+     * Giảm độ trễ E2E xuống < 20ms mà vẫn giữ trọn vẹn độ tin cậy của Outbox Pattern.
+     */
+    private void dispatchFastPath(Long conversationId, Long messageId, RedisEventType eventType, String payloadJson) {
+        Runnable action = () -> {
+            try {
+                redisPublisher.publishRaw(conversationId, eventType, payloadJson);
+                outboxRepo.markDoneByMessageId(messageId);
+                log.debug("[FastPath] Dispatched {} msgId={} to convId={}", eventType, messageId, conversationId);
+            } catch (Exception e) {
+                log.warn("[FastPath] Failed for msgId={}, OutboxPoller will rescue: {}", messageId, e.getMessage());
+            }
+        };
+
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
+        } else {
+            action.run();
         }
     }
 

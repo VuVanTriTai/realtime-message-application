@@ -68,6 +68,9 @@ class MessageServiceTest {
     private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     @Mock
+    private com.project.realtime._messaging_application.websocket.pubsub.RedisMessagePublisher redisPublisher;
+
+    @Mock
     private Counter messagesSentCounter;   // Micrometer counter mock
 
     @Mock

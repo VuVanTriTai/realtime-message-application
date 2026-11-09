@@ -17,10 +17,6 @@ public interface MessageOutboxRepository extends JpaRepository<MessageOutbox, Lo
     /**
      * Lay toi da :limit ban ghi PENDING, sap xep theo created_at ASC
      * (xu ly theo thu tu den).
-     * Dung LIMIT de tranh doc qua nhieu ban ghi trong 1 batch.
-     *
-     * Chi dung khi single-instance (khong co lock).
-     * Voi multi-instance, goi findPendingWithLock() thay the.
      */
     @Query("""
             SELECT o FROM MessageOutbox o
@@ -36,20 +32,34 @@ public interface MessageOutboxRepository extends JpaRepository<MessageOutbox, Lo
     /**
      * SELECT FOR UPDATE SKIP LOCKED — an toan cho multi-instance deployment.
      *
-     * Moi instance giu lock tren cac row no dang xu ly;
-     * instance khac tu dong bo qua cac row da bi lock (SKIP LOCKED),
-     * tranh duplicate publish khi scale ngang.
-     *
-     * Dung native query vi JPQL khong ho tro FOR UPDATE SKIP LOCKED.
+     * Chỉ bốc các tin PENDING đã tồn tại quá 3 giây (những tin mà Fast Path đã thất bại hoặc bị crash).
+     * Tránh đụng độ hoặc gửi trùng với Fast Path tức thì.
      */
     @Query(value = """
             SELECT * FROM message_outbox
             WHERE status = 'PENDING'
+              AND created_at < NOW() - INTERVAL '3 seconds'
             ORDER BY created_at ASC
             LIMIT :limit
             FOR UPDATE SKIP LOCKED
             """, nativeQuery = true)
     List<MessageOutbox> findPendingWithLock(@Param("limit") int limit);
+
+    /**
+     * Fast Path: Đánh dấu DONE theo message_id ngay khi publish trực tiếp thành công.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE MessageOutbox o SET o.status = 'DONE', o.processedAt = CURRENT_TIMESTAMP WHERE o.messageId = :messageId")
+    int markDoneByMessageId(@Param("messageId") Long messageId);
+
+    /**
+     * Batch update: Đánh dấu DONE hàng loạt trong 1 câu lệnh duy nhất (tối ưu IO).
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE MessageOutbox o SET o.status = 'DONE', o.processedAt = CURRENT_TIMESTAMP WHERE o.id IN :ids")
+    int markAllDone(@Param("ids") List<Long> ids);
 
     /**
      * Xoa sach cac ban ghi DONE de giu bang gon.
