@@ -208,17 +208,6 @@ public class OutboxPoller {
             return false;
         }
     }
-                item.markFailed();
-                log.error("[Outbox] Marked FAILED after {} retries: outboxId={} msgId={} error={}",
-                        MAX_RETRY_COUNT, item.getId(), item.getMessageId(), e.getMessage());
-            } else {
-                log.warn("[Outbox] Retry {}/{} for outboxId={}: {}",
-                        item.getRetryCount(), MAX_RETRY_COUNT, item.getId(), e.getMessage());
-            }
-
-            outboxRepo.save(item);
-        }
-    }
 
     // ================================================================
     // Cleanup job & Lifecycle
