@@ -71,6 +71,9 @@ class MessageServiceTest {
     private com.project.realtime._messaging_application.websocket.pubsub.RedisMessagePublisher redisPublisher;
 
     @Mock
+    private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+
+    @Mock
     private Counter messagesSentCounter;   // Micrometer counter mock
 
     @Mock

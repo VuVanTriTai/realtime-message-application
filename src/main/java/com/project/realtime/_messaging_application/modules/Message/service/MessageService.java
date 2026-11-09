@@ -28,6 +28,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Instant;
@@ -49,6 +50,7 @@ public class MessageService {
     private final ObjectMapper objectMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final RedisMessagePublisher redisPublisher;
+    private final TransactionTemplate transactionTemplate;
     // Metrics
     private final Counter messagesSentCounter;
     private final Timer   messageLatencyTimer;
@@ -61,6 +63,7 @@ public class MessageService {
             ObjectMapper objectMapper,
             ApplicationEventPublisher eventPublisher,
             RedisMessagePublisher redisPublisher,
+            TransactionTemplate transactionTemplate,
             Counter messagesSentCounter,
             Timer messageLatencyTimer) {
         this.messageRepo          = messageRepo;
@@ -71,6 +74,7 @@ public class MessageService {
         this.objectMapper         = objectMapper;
         this.eventPublisher       = eventPublisher;
         this.redisPublisher       = redisPublisher;
+        this.transactionTemplate  = transactionTemplate;
         this.messagesSentCounter  = messagesSentCounter;
         this.messageLatencyTimer  = messageLatencyTimer;
     }
@@ -271,7 +275,7 @@ public class MessageService {
         Runnable action = () -> {
             try {
                 redisPublisher.publishRaw(conversationId, eventType, payloadJson);
-                outboxRepo.markDoneByMessageId(messageId);
+                transactionTemplate.executeWithoutResult(status -> outboxRepo.markDoneByMessageId(messageId));
                 log.debug("[FastPath] Dispatched {} msgId={} to convId={}", eventType, messageId, conversationId);
             } catch (Exception e) {
                 log.warn("[FastPath] Failed for msgId={}, OutboxPoller will rescue: {}", messageId, e.getMessage());
