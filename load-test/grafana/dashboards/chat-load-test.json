@@ -152,6 +152,31 @@
         "legendFormat": "Fanout P95 ms"
       }],
       "fieldConfig": { "defaults": { "unit": "ms" }}
+    },
+    {
+      "id": 13,
+      "title": "Outbox Queue Wait Time P95 (ms) — Bottleneck Tracker",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 26, "w": 12, "h": 7 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "histogram_quantile(0.95, rate(chat_outbox_delay_seconds_bucket[1m]))",
+        "legendFormat": "Outbox Wait P95 ms"
+      }],
+      "fieldConfig": { "defaults": { "unit": "ms" }}
+    },
+    {
+      "id": 14,
+      "title": "DB Save Duration P95 (ms) — Postgres Persistence",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 26, "w": 12, "h": 7 },
+      "targets": [{
+        "datasource": "Prometheus",
+        "expr": "histogram_quantile(0.95, rate(chat_messages_latency_seconds_bucket[1m])) * 1000",
+        "legendFormat": "DB Save P95 ms"
+      }],
+      "fieldConfig": { "defaults": { "unit": "ms" }}
     }
   ]
 }
+

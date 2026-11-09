@@ -3,13 +3,17 @@ package com.project.realtime._messaging_application.websocket.pubsub;
 import com.project.realtime._messaging_application.modules.Message.entity.MessageOutbox;
 import com.project.realtime._messaging_application.modules.Message.entity.MessageOutbox.Status;
 import com.project.realtime._messaging_application.modules.Message.repository.MessageOutboxRepository;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * OutboxPoller doc cac ban ghi PENDING tu message_outbox va publish len Redis.
@@ -43,11 +47,14 @@ public class OutboxPoller {
 
     private final MessageOutboxRepository outboxRepo;
     private final RedisMessagePublisher   redisPublisher;
+    private final Timer                   outboxDelayTimer;
 
     public OutboxPoller(MessageOutboxRepository outboxRepo,
-                        RedisMessagePublisher redisPublisher) {
-        this.outboxRepo     = outboxRepo;
-        this.redisPublisher = redisPublisher;
+                         RedisMessagePublisher redisPublisher,
+                         Timer outboxDelayTimer) {
+        this.outboxRepo       = outboxRepo;
+        this.redisPublisher   = redisPublisher;
+        this.outboxDelayTimer = outboxDelayTimer;
     }
 
     // ================================================================
@@ -87,6 +94,12 @@ public class OutboxPoller {
      */
     private void processItem(MessageOutbox item) {
         try {
+            // Đo thời gian tin nhắn nằm chờ trong hàng đợi outbox (từ lúc ghi DB đến lúc bốc lên publish)
+            if (item.getCreatedAt() != null) {
+                long delayMs = Duration.between(item.getCreatedAt(), Instant.now()).toMillis();
+                outboxDelayTimer.record(delayMs, TimeUnit.MILLISECONDS);
+            }
+
             // Publish payload JSON len Redis theo dung eventType NEW_MESSAGE
             redisPublisher.publishRaw(item.getConversationId(),
                     RedisEventType.NEW_MESSAGE,

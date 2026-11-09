@@ -5,12 +5,15 @@ import com.project.realtime._messaging_application.modules.Message.dto.MessageRe
 import com.project.realtime._messaging_application.websocket.ChatWebSocketHandler.ReadReceipt;
 import com.project.realtime._messaging_application.websocket.ChatWebSocketHandler.TypingEvent;
 import com.project.realtime._messaging_application.websocket.WebSocketEventListener.PresenceEvent;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
+
+import java.util.concurrent.TimeUnit;
 
 /**
  * RedisMessageSubscriber – nhận event từ Redis, forward tới WebSocket clients.
@@ -38,11 +41,14 @@ public class RedisMessageSubscriber implements MessageListener {
 
     private final SimpMessagingTemplate messagingTemplate;
     private final ObjectMapper          objectMapper;
+    private final Timer                 fanoutDurationTimer;
 
     public RedisMessageSubscriber(SimpMessagingTemplate messagingTemplate,
-                                  ObjectMapper objectMapper) {
-        this.messagingTemplate = messagingTemplate;
-        this.objectMapper      = objectMapper;
+                                  ObjectMapper objectMapper,
+                                  Timer fanoutDurationTimer) {
+        this.messagingTemplate   = messagingTemplate;
+        this.objectMapper        = objectMapper;
+        this.fanoutDurationTimer = fanoutDurationTimer;
     }
 
     /**
@@ -64,9 +70,11 @@ public class RedisMessageSubscriber implements MessageListener {
 
                 case NEW_MESSAGE -> {
                     MessageResponse msg = objectMapper.readValue(payload, MessageResponse.class);
+                    long startFanout = System.nanoTime();
                     // Push tới tất cả subscriber của conversation trên instance này
                     messagingTemplate.convertAndSend(
                             "/topic/conversation." + convId, msg);
+                    fanoutDurationTimer.record(System.nanoTime() - startFanout, TimeUnit.NANOSECONDS);
                     log.debug("Forwarded NEW_MESSAGE conv={} msg={}", convId, msg.id());
                 }
 

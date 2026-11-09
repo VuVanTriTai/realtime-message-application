@@ -63,6 +63,19 @@ public class MetricsConfig {
                 .register(registry);
     }
 
+    /**
+     * Do thoi gian tin nhan nam cho trong outbox table truoc khi duoc OutboxPoller boc len publish.
+     * Cho biet do tre do polling schedule gay ra.
+     */
+    @Bean
+    public Timer outboxDelayTimer(MeterRegistry registry) {
+        return Timer.builder("chat.outbox.delay")
+                .description("Time message waited in outbox before being published to Redis")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .publishPercentileHistogram()
+                .register(registry);
+    }
+
     // ================================================================
     // WebSocket Session Metrics
     // ================================================================
