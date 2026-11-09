@@ -9,7 +9,7 @@
 --
 -- Password LoadTest@123 -> BCrypt $2a$10$... (hash co san)
 -- BCrypt hash cua "LoadTest@123" voi 10 rounds:
---   $2a$10$8K1p/a0dL1LXMIgoEDFrwOfMQbLgtnOoKsWc.6U6CqZNMUAAHB3m2
+--   $2a$10$9Z6BMktFg2mquyyExW.NvOr298eQ8jlazTVJogeVm76fusD2kGUtK
 -- ============================================================
 
 -- ============================================================
@@ -20,7 +20,7 @@ DECLARE
   i         INT;
   uname     TEXT;
   uemail    TEXT;
-  uhash     TEXT := '$2a$10$8K1p/a0dL1LXMIgoEDFrwOfMQbLgtnOoKsWc.6U6CqZNMUAAHB3m2';
+  uhash     TEXT := '$2a$10$9Z6BMktFg2mquyyExW.NvOr298eQ8jlazTVJogeVm76fusD2kGUtK';
   udisplay  TEXT;
 BEGIN
   FOR i IN 1..200 LOOP

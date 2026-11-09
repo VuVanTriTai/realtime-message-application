@@ -48,4 +48,9 @@ logs/
 
 ### OS ###
 .DS_Store
+
+### Load Test Binary ###
+load-test/k6.exe
+*.exe
+
 Thumbs.db

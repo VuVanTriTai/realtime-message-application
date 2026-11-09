@@ -19,10 +19,21 @@ export const API_URL = __ENV.API_URL || "http://localhost:8080";
  * @returns {string} JWT token
  */
 export function login(username, password) {
+  // Trich xuat so user de tao dia chi IP gia lap rieng biet cho moi user (X-Forwarded-For)
+  // Mo phong 200 client/thiet bi that khac nhau, tranh bi chan boi RateLimiter (5 req/phut/IP)
+  const userNumMatch = username.match(/\d+/);
+  const userNum = userNumMatch ? parseInt(userNumMatch[0], 10) : 1;
+  const simulatedIp = `10.200.${Math.floor(userNum / 250)}.${(userNum % 250) + 1}`;
+
   const res = http.post(
     `${API_URL}/api/auth/login`,
     JSON.stringify({ username, password }),
-    { headers: { "Content-Type": "application/json" } }
+    {
+      headers: {
+        "Content-Type": "application/json",
+        "X-Forwarded-For": simulatedIp,
+      },
+    }
   );
 
   check(res, {
