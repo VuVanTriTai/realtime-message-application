@@ -187,11 +187,11 @@ export function senderScenario(data) {
           errorRate.add(1);
         }
 
-        socket.setTimeout(scheduleNextSend, currentInterval);
+        socket.setTimeout(scheduleNextSend, Math.max(10, currentInterval));
       };
 
-      // Bắt đầu vòng gửi tin
-      socket.setTimeout(scheduleNextSend, Math.floor(Math.random() * 500));
+      // Bắt đầu vòng gửi tin (tối thiểu 10ms để tránh lỗi k6 yêu cầu timeout > 0)
+      socket.setTimeout(scheduleNextSend, Math.floor(Math.random() * 500) + 10);
     },
   });
 }
