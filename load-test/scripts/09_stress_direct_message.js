@@ -46,8 +46,8 @@ function parseDurationSec(dStr) {
 // Tính toán vòng đời: Vào trước - Ra sau (Tránh mất tin giả)
 // ============================================================
 const SEND_DURATION_SEC   = parseDurationSec(DURATION_STR);
-const SENDER_START_DELAY  = 10; // Chờ 10s để 100% receiver kết nối & subscribe xong
-const RECEIVER_DRAIN_TIME = 10; // Receiver sống thêm 10s sau khi sender dừng để hứng trọn tin cuối
+const SENDER_START_DELAY  = 15; // Chờ 15s để 100% receiver kết nối & subscribe xong (đủ cho LAN)
+const RECEIVER_DRAIN_TIME = 20; // Receiver sống thêm 20s sau khi sender dừng (đủ hứng tin bay qua LAN)
 const RECEIVER_TOTAL_SEC  = SENDER_START_DELAY + SEND_DURATION_SEC + RECEIVER_DRAIN_TIME;
 
 // Custom Metrics
@@ -65,16 +65,16 @@ export const options = {
       vus:          TOTAL_PAIRS,
       startTime:    "0s",
       duration:     `${RECEIVER_TOTAL_SEC}s`,
-      gracefulStop: "5s",
+      gracefulStop: "15s",
     },
-    // 2. Senders: Bắt đầu sau 10s (khi receivers đã sẵn sàng), dừng trước receivers
+    // 2. Senders: Bắt đầu sau 15s (khi receivers đã sẵn sàng), dừng trước receivers
     senders: {
       executor:     "constant-vus",
       exec:         "senderScenario",
       vus:          TOTAL_PAIRS,
       startTime:    `${SENDER_START_DELAY}s`,
       duration:     `${SEND_DURATION_SEC}s`,
-      gracefulStop: "5s",
+      gracefulStop: "15s",
     },
   },
   thresholds: {
