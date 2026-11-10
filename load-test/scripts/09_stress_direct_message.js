@@ -68,6 +68,7 @@ const msgReceived = new Counter("messages_received_total");
 const errorRate   = new Rate("message_error_rate");
 
 export const options = {
+  setupTimeout: "180s", // 400 pairs = 800 HTTP logins, cần ~80-120s. Mặc định k6 chỉ 60s → timeout
   scenarios: {
     // 1. Receivers: Vào trước ở giây 0, sống bao trùm toàn bộ bài test
     receivers: {
