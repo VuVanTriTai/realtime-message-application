@@ -1,7 +1,10 @@
 package com.project.realtime._messaging_application.common.ratelimit;
 
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -16,7 +19,7 @@ import java.time.Duration;
  *  - Giải pháp: inject service này trực tiếp vào ChatWebSocketHandler, key = userId.
  *
  * Chiến lược giới hạn:
- *  - sendMessage  : tối đa 30 tin / 10 giây / userId
+ *  - sendMessage  : tối đa N tin / W giây / userId (cấu hình qua properties)
  *  - typing event : tối đa 10 lần / 3 giây / userId (tránh spam indicator)
  *
  * Cơ chế: Redis atomic INCR + TTL (sliding window đơn giản).
@@ -25,15 +28,25 @@ import java.time.Duration;
  *  - Nếu count > limit: từ chối.
  *
  * Fail-open: nếu Redis tạm thời không khả dụng → cho phép (không chặn user).
+ *
+ * Observability: Mọi lần bị chặn đều được đếm vào Prometheus counter
+ *   ws_rate_limited_total{type="MSG"|"TYPING"} để Grafana hiển thị.
  */
 @Service
 public class WebSocketRateLimiterService {
 
     private static final Logger log = LoggerFactory.getLogger(WebSocketRateLimiterService.class);
 
-    /** Giới hạn gửi tin nhắn */
-    public static final int  MSG_LIMIT    = 30;
-    public static final int  MSG_WINDOW_S = 10;
+    /** Giới hạn gửi tin nhắn — đọc từ properties, default 30/10s */
+    @Value("${chat.ratelimit.ws.msg-limit:30}")
+    private int msgLimit;
+
+    @Value("${chat.ratelimit.ws.msg-window-seconds:10}")
+    private int msgWindowSeconds;
+
+    // Giữ các hằng public để ChatWebSocketHandler vẫn đọc được thông báo lỗi
+    public static final int MSG_LIMIT    = 30;  // fallback constant (UI message only)
+    public static final int MSG_WINDOW_S = 10;
 
     /** Giới hạn typing event */
     public static final int  TYPING_LIMIT    = 10;
@@ -44,8 +57,21 @@ public class WebSocketRateLimiterService {
 
     private final StringRedisTemplate redisTemplate;
 
-    public WebSocketRateLimiterService(StringRedisTemplate redisTemplate) {
+    /** Prometheus counters — đếm số lần bị chặn để Grafana hiển thị */
+    private final io.micrometer.core.instrument.Counter msgBlockedCounter;
+    private final io.micrometer.core.instrument.Counter typingBlockedCounter;
+
+    public WebSocketRateLimiterService(StringRedisTemplate redisTemplate,
+                                       io.micrometer.core.instrument.MeterRegistry meterRegistry) {
         this.redisTemplate = redisTemplate;
+        this.msgBlockedCounter = io.micrometer.core.instrument.Counter.builder("ws_rate_limited_total")
+                .tag("type", "MSG")
+                .description("Số lần tin nhắn WebSocket bị chặn bởi Rate Limiter")
+                .register(meterRegistry);
+        this.typingBlockedCounter = io.micrometer.core.instrument.Counter.builder("ws_rate_limited_total")
+                .tag("type", "TYPING")
+                .description("Số lần typing event bị chặn bởi Rate Limiter")
+                .register(meterRegistry);
     }
 
     // ================================================================
@@ -59,7 +85,7 @@ public class WebSocketRateLimiterService {
      * @return true nếu còn trong ngưỡng; false nếu vượt ngưỡng
      */
     public boolean allowMessage(Long userId) {
-        return check(KEY_PREFIX_MSG + userId, MSG_LIMIT, MSG_WINDOW_S, userId, "MSG");
+        return check(KEY_PREFIX_MSG + userId, msgLimit, msgWindowSeconds, userId, "MSG");
     }
 
     /**
@@ -103,6 +129,12 @@ public class WebSocketRateLimiterService {
             if (count > limit) {
                 log.warn("[WS-RateLimit] userId={} type={} blocked count={}/{}",
                         userId, type, count, limit);
+                // Tăng Prometheus counter để Grafana/Actuator ghi nhận tin bị chặn
+                if ("MSG".equals(type)) {
+                    msgBlockedCounter.increment();
+                } else {
+                    typingBlockedCounter.increment();
+                }
                 return false;
             }
             return true;
