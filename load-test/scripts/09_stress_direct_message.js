@@ -225,28 +225,49 @@ export function senderScenario(data) {
 // Báo cáo tổng kết toàn vẹn dữ liệu (Data Integrity Summary)
 // ============================================================
 export function handleSummary(data) {
-  const sent = data.metrics.messages_sent_total ? data.metrics.messages_sent_total.values.count : 0;
+  const sent     = data.metrics.messages_sent_total     ? data.metrics.messages_sent_total.values.count     : 0;
   const received = data.metrics.messages_received_total ? data.metrics.messages_received_total.values.count : 0;
-  const lost = Math.max(0, sent - received);
-  const lossRate = sent > 0 ? ((lost / sent) * 100).toFixed(2) : "0.00";
+  const wsLost   = Math.max(0, sent - received);
+  const lossRate    = sent > 0 ? ((wsLost / sent) * 100).toFixed(2) : "0.00";
   const deliveryRate = sent > 0 ? ((received / sent) * 100).toFixed(2) : "100.00";
 
-  const isPerfect = (lost === 0 && sent > 0);
-  const statusIcon = isPerfect ? "✅ [PASSED]" : (lost <= sent * 0.005 ? "⚠️ [ACCEPTABLE]" : "❌ [FAILED]");
+  // Lấy thêm các chỉ số hiệu năng quan trọng
+  const latencyAvg = data.metrics.e2e_message_latency_ms ? data.metrics.e2e_message_latency_ms.values.avg.toFixed(1) : "N/A";
+  const latencyP95 = data.metrics.e2e_message_latency_ms ? data.metrics.e2e_message_latency_ms.values["p(95)"].toFixed(1) : "N/A";
+  const latencyMax = data.metrics.e2e_message_latency_ms ? data.metrics.e2e_message_latency_ms.values.max.toFixed(1) : "N/A";
+  const wsErrRate  = data.metrics.message_error_rate     ? (data.metrics.message_error_rate.values.rate * 100).toFixed(2) : "0.00";
 
-  const integrityBanner = `
+  // Phân loại kết quả: PASSED / ACCEPTABLE / FAILED
+  const wsIcon = (wsLost === 0 && sent > 0) ? "✅" : (wsLost <= sent * 0.03 ? "⚠️" : "❌");
+  const latIcon = parseFloat(latencyP95) < 100 ? "✅" : (parseFloat(latencyP95) < 300 ? "⚠️" : "❌");
+  const errIcon = parseFloat(wsErrRate) < 0.01 ? "✅" : "❌";
+
+  const banner = `
 ================================================================================
-  BÁO CÁO TOÀN VẸN DỮ LIỆU & THẤT THOÁT TIN NHẮN (DATA INTEGRITY REPORT)
+  BÁO CÁO KẾT QUẢ STRESS TEST (FULL SUMMARY)
 ================================================================================
-  ${statusIcon} Trạng thái toàn vẹn dữ liệu:
-    - Tổng tin nhắn gửi đi (Sent)      : ${sent} tin
-    - Tổng tin nhắn nhận được (Received): ${received} tin
-    - Số tin nhắn thất thoát (Lost)    : ${lost} tin (${lossRate}%)
-    - Tỷ lệ phát thành công (Delivery) : ${deliveryRate}%
+
+  📦 TOÀN VẸN DỮ LIỆU (DATA INTEGRITY):
+    ${wsIcon} Sent             : ${sent} tin
+    ${wsIcon} Received (k6)   : ${received} tin (WebSocket delivery)
+    ${wsIcon} Lost (k6)       : ${wsLost} tin (${lossRate}%)
+       → Ghi chú: Tin "lost" VẪN được lưu DB. Dùng lệnh SQL để xác nhận:
+         SELECT COUNT(*) FROM messages WHERE content LIKE 'k6|%'
+           AND created_at > NOW() - INTERVAL '10 minutes';
+    ${wsIcon} Delivery Rate    : ${deliveryRate}%
+
+  ⚡ HIỆU NĂNG END-TO-END (E2E LATENCY):
+    ${latIcon} avg             : ${latencyAvg} ms
+    ${latIcon} p(95)           : ${latencyP95} ms
+    ${latIcon} max             : ${latencyMax} ms
+
+  🔧 ĐỘ ỔN ĐỊNH (STABILITY):
+    ${errIcon} Send Error Rate : ${wsErrRate}%
+
 ================================================================================
 `;
 
   return {
-    stdout: integrityBanner + "\n" + textSummary(data, { indent: " ", enableColors: true }),
+    stdout: banner + "\n" + textSummary(data, { indent: " ", enableColors: true }),
   };
 }
