@@ -1,17 +1,17 @@
 /**
- * 02_direct_message.js — Kich ban 2: Gui tin 1-1 thuan WebSocket (E2E WS-to-WS)
+ * 02_direct_message.js — Kịch bản 2: Gửi tin 1-1 thuần WebSocket (E2E WS-to-WS)
  * ==============================================================================
- * Muc dich: Do do tre End-to-End thuc te giua 2 nguoi dung qua WebSocket:
- *   - User A (Sender) ket noi WebSocket STOMP, dinh ky gui tin toi /app/chat.send
- *   - User B (Receiver) ket noi WebSocket STOMP, lang nghe /topic/conversation.{convId}
- *   - Tin nhan mang payload: k6|<timestamp>|<text>
- *   - User B nhan tin -> latency = Date.now() - timestamp
- *   - 100% dung WebSocket STOMP hai chieu, KHONG dung HTTP REST API
+ * Mục đích: Đo độ trễ End-to-End thực tế giữa 2 người dùng qua WebSocket:
+ *   - User A (Sender) kết nối WebSocket STOMP, định kỳ gửi tin tới /app/chat.send
+ *   - User B (Receiver) kết nối WebSocket STOMP, lắng nghe /topic/conversation.{convId}
+ *   - Cơ chế Vào trước - Ra sau: Receivers mở trước 10s và đóng sau 15s để hứng trọn tin
+ *   - Đo tính toàn vẹn dữ liệu (Data Integrity): Xác nhận không thất thoát tin
+ *   - 100% dùng WebSocket STOMP hai chiều, KHÔNG dùng HTTP REST API
  *
- * Chay:
- *   k6 run load-test/scripts/02_direct_message.js
+ * Chạy:
+ *   .\load-test\k6.exe run load-test/scripts/02_direct_message.js
  *
- * Nguong thanh cong:
+ * Ngưỡng thành công:
  *   - P50 latency < 100ms
  *   - P95 latency < 300ms
  *   - P99 latency < 1000ms
@@ -20,104 +20,111 @@
 
 import { sleep, check } from "k6";
 import { Trend, Counter, Rate } from "k6/metrics";
+import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
 import { stompSession } from "./stomp-helper.js";
 import { login, getMyConversations } from "./auth-helper.js";
 
 // ============================================================
 // Custom metrics
 // ============================================================
-const e2eLatency = new Trend("e2e_message_latency_ms", true); // Do tre End-to-End (ms)
-const msgSent = new Counter("messages_sent_total");        // Tong so tin User A da gui
-const msgReceived = new Counter("messages_received_total");    // Tong so tin User B da nhan
-const errorRate = new Rate("message_error_rate");
+const e2eLatency  = new Trend("e2e_message_latency_ms", true);
+const msgSent     = new Counter("messages_sent_total");
+const msgReceived = new Counter("messages_received_total");
+const errorRate   = new Rate("message_error_rate");
 
 // ============================================================
-// Scenarios: 2 nhom VU chay song song
+// Thời gian vòng đời: Vào trước 10s - Ra sau 15s (Tránh mất tin giả)
 // ============================================================
+const SENDER_START_DELAY  = 10;  // Chờ 10s cho 100% receiver subscribe xong
+const SEND_DURATION_SEC   = 300; // 5 phút gửi tin liên tục (1 tin / 2.5s)
+const RECEIVER_DRAIN_TIME = 15;  // Receiver sống thêm 15s để hứng sạch tin cuối
+const RECEIVER_TOTAL_SEC  = SENDER_START_DELAY + SEND_DURATION_SEC + RECEIVER_DRAIN_TIME; // 325s (5m25s)
+
 export const options = {
   scenarios: {
-    // 1. Nhom Nguoi nhan (User B): Mo WebSocket truoc, ngoi nghe tin
+    // 1. Nhóm Người nhận (User B): Mở WebSocket từ giây 0s, sống bao trùm 5m25s
     receivers: {
-      executor: "constant-vus",
-      exec: "receiverScenario",
-      vus: 50,          // 50 nguoi nhan cho 50 cap 1-1
-      duration: "5m",
+      executor:     "constant-vus",
+      exec:         "receiverScenario",
+      vus:          50,
+      startTime:    "0s",
+      duration:     `${RECEIVER_TOTAL_SEC}s`,
+      gracefulStop: "5s",
     },
-    // 2. Nhom Nguoi gui (User A): Mo WebSocket, gui tin dinh ky qua /app/chat.send
+    // 2. Nhóm Người gửi (User A): Bắt đầu ở giây thứ 10, chạy đúng 5 phút rồi dừng
     senders: {
-      executor: "constant-vus",
-      exec: "senderScenario",
-      vus: 50,          // 50 nguoi gui tuong ung
-      duration: "5m",
-      startTime: "5s",        // Khoi dong sau 5s de nguoi nhan da subscribe on dinh
+      executor:     "constant-vus",
+      exec:         "senderScenario",
+      vus:          50,
+      startTime:    `${SENDER_START_DELAY}s`,
+      duration:     `${SEND_DURATION_SEC}s`,
+      gracefulStop: "5s",
     },
   },
   thresholds: {
     "e2e_message_latency_ms": ["p(50)<100", "p(95)<300", "p(99)<1000"],
-    "message_error_rate": ["rate<0.01"],
+    "message_error_rate":     ["rate<0.01"],
   },
 };
 
 // ============================================================
-// Setup: Chay 1 lan duy nhat de chuan bi 50 cap User va Conversation
+// Setup: Chuẩn bị 50 cặp User và Conversation từ DB seed
 // ============================================================
 export function setup() {
-  console.log("==> [Setup] Dang khoi tao 50 cap chat 1-1 tu seed data...");
+  console.log("==> [Setup] Đang khởi tạo 50 cặp chat 1-1 từ seed data...");
   const pairs = [];
-  const TOTAL_PAIRS = 50; // testuser001..100 (50 cap 1-1 co san trong V6 seed)
+  const TOTAL_PAIRS = 50;
 
   for (let i = 1; i <= TOTAL_PAIRS; i++) {
-    const senderName = `testuser${String(2 * i - 1).padStart(3, "0")}`;
+    const senderName   = `testuser${String(2 * i - 1).padStart(3, "0")}`;
     const receiverName = `testuser${String(2 * i).padStart(3, "0")}`;
 
     const tokenA = login(senderName, "LoadTest@123");
     const tokenB = login(receiverName, "LoadTest@123");
 
     if (!tokenA || !tokenB) {
-      console.warn(`[Setup] Khong the dang nhap cap ${senderName} <-> ${receiverName}`);
+      console.warn(`[Setup] Không thể đăng nhập cặp ${senderName} <-> ${receiverName}`);
       continue;
     }
 
-    // Lay danh sach cuoc tro chuyen cua sender de tim ID conversation 1-1
     const convs = getMyConversations(tokenA);
     const directConv = convs.find((c) => c.type === "DIRECT");
 
     if (directConv) {
       pairs.push({
-        pairIndex: i,
-        convId: directConv.id,
-        senderName: senderName,
-        receiverName: receiverName,
-        senderToken: tokenA,
+        pairIndex:     i,
+        convId:        directConv.id,
+        senderName:    senderName,
+        receiverName:  receiverName,
+        senderToken:   tokenA,
         receiverToken: tokenB,
       });
     }
 
-    sleep(0.02); // Nghi nhe tranh flood HTTP Auth luc setup
+    sleep(0.02);
   }
 
-  console.log(`==> [Setup] Da san sang ${pairs.length} cap chat 1-1.`);
+  console.log(`==> [Setup] Đã sẵn sàng ${pairs.length} cặp chat 1-1. Senders gửi trong 5m, Receivers mở 5m25s.`);
   if (pairs.length === 0) {
-    throw new Error("Khong tim thay conversation 1-1 nao! Vui long kiem tra seed V6.");
+    throw new Error("Không tìm thấy conversation 1-1 nào! Vui lòng kiểm tra seed V6/V8.");
   }
 
   return { pairs };
 }
 
 // ============================================================
-// Scenario 1: Nguoi nhan (User B) qua WebSocket STOMP
+// Scenario 1: Người nhận (User B) qua WebSocket STOMP
 // ============================================================
 export function receiverScenario(data) {
   const pair = data.pairs[(__VU - 1) % data.pairs.length];
 
   stompSession({
-    token: pair.receiverToken,
+    token:           pair.receiverToken,
     conversationIds: [pair.convId],
-    durationSeconds: 295,
+    durationSeconds: RECEIVER_TOTAL_SEC + 5,
     onMessage: (msg) => {
-      // Tin nhan broadcast ve tu /topic/conversation.{convId}
       if (msg && typeof msg.content === "string" && msg.content.startsWith("k6|")) {
-        const parts = msg.content.split("|");
+        const parts  = msg.content.split("|");
         const sentAt = parseInt(parts[1], 10);
 
         if (!isNaN(sentAt)) {
@@ -131,34 +138,64 @@ export function receiverScenario(data) {
 }
 
 // ============================================================
-// Scenario 2: Nguoi gui (User A) qua WebSocket STOMP
+// Scenario 2: Người gửi (User A) qua WebSocket STOMP
 // ============================================================
 export function senderScenario(data) {
   const pair = data.pairs[(__VU - 1) % data.pairs.length];
 
   stompSession({
-    token: pair.senderToken,
-    conversationIds: [], // Sender chi gui, khong can lang nghe
-    durationSeconds: 290,
+    token:           pair.senderToken,
+    conversationIds: [],
+    durationSeconds: SEND_DURATION_SEC + 5,
     onConnected: (socket, sendFrame) => {
-      // Dinh ky moi 2.5 giay ban 1 tin nhan qua WebSocket destination: /app/chat.send
       socket.setInterval(() => {
-        const sentAt = Date.now();
+        const sentAt      = Date.now();
         const clientMsgId = `ws-k6-${__VU}-${sentAt}`;
-        const content = `k6|${sentAt}|Ping from ${pair.senderName}`;
+        const content     = `k6|${sentAt}|Ping from ${pair.senderName}`;
 
         try {
           sendFrame("/app/chat.send", {
-            conversationId: pair.convId,
-            content: content,
-            type: "TEXT",
+            conversationId:  pair.convId,
+            content:         content,
+            type:            "TEXT",
             clientMessageId: clientMsgId,
           });
           msgSent.add(1);
+          errorRate.add(false); // Ghi nhận thành công -> mẫu số tăng, lỗi = 0
         } catch (err) {
-          errorRate.add(1);
+          errorRate.add(true);  // Ghi nhận lỗi socket
         }
-      }, 2500); // 2.5 giay / tin nhan
+      }, 2500); // 2.5 giây / tin
     },
   });
+}
+
+// ============================================================
+// Báo cáo tổng kết toàn vẹn dữ liệu (Data Integrity Summary)
+// ============================================================
+export function handleSummary(data) {
+  const sent = data.metrics.messages_sent_total ? data.metrics.messages_sent_total.values.count : 0;
+  const received = data.metrics.messages_received_total ? data.metrics.messages_received_total.values.count : 0;
+  const lost = Math.max(0, sent - received);
+  const lossRate = sent > 0 ? ((lost / sent) * 100).toFixed(2) : "0.00";
+  const deliveryRate = sent > 0 ? ((received / sent) * 100).toFixed(2) : "100.00";
+
+  const isPerfect = (lost === 0 && sent > 0);
+  const statusIcon = isPerfect ? "✅ [PASSED]" : (lost <= sent * 0.005 ? "⚠️ [ACCEPTABLE]" : "❌ [FAILED]");
+
+  const integrityBanner = `
+================================================================================
+  BÁO CÁO TOÀN VẸN DỮ LIỆU & THẤT THOÁT TIN NHẮN (DATA INTEGRITY REPORT)
+================================================================================
+  ${statusIcon} Kết quả kiểm thử:
+    - Tổng tin nhắn gửi đi (Sent)      : ${sent} tin
+    - Tổng tin nhắn nhận được (Received): ${received} tin
+    - Số tin nhắn thất thoát (Lost)    : ${lost} tin (${lossRate}%)
+    - Tỷ lệ phát thành công (Delivery) : ${deliveryRate}%
+================================================================================
+`;
+
+  return {
+    stdout: integrityBanner + "\n" + textSummary(data, { indent: " ", enableColors: true }),
+  };
 }

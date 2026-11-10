@@ -4,10 +4,11 @@
  * Mục đích:
  *   - Đo độ trễ E2E và khả năng chịu tải của hệ thống ở cường độ cao (150 - 500 msg/s).
  *   - Hỗ trợ linh hoạt số cặp (PAIRS), tần suất gửi (INTERVAL_MS), và thời lượng (DURATION).
+ *   - Đo tính toàn vẹn dữ liệu (Data Integrity): Xác nhận tỷ lệ phát thành công 100%, không mất tin.
  *   - 100% sử dụng WebSocket STOMP hai chiều (Client A -> Server -> Redis -> Server -> Client B).
  *
  * Cách chạy:
- *   # Mặc định: 150 cặp (300 VUs), 1000ms / tin (~150 tin/s, thời lượng 3 phút):
+ *   # Mặc định: 150 cặp (300 VUs), 1000ms / tin (~150 tin/s, thời lượng 1m30s):
  *   .\load-test\k6.exe run load-test/scripts/09_stress_direct_message.js
  *
  *   # Tùy chỉnh tải cực hạn (250 cặp, 500ms / tin -> 500 tin/s):
@@ -19,6 +20,7 @@
 
 import { sleep, check } from "k6";
 import { Trend, Counter, Rate } from "k6/metrics";
+import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
 import { stompSession } from "./stomp-helper.js";
 import { login, getMyConversations } from "./auth-helper.js";
 
@@ -27,8 +29,26 @@ import { login, getMyConversations } from "./auth-helper.js";
 // ============================================================
 const TOTAL_PAIRS      = parseInt(__ENV.PAIRS || "150", 10);
 const BASE_INTERVAL_MS = parseInt(__ENV.INTERVAL_MS || "1000", 10);
-const DURATION_STR     = __ENV.DURATION || "3m";
+const DURATION_STR     = __ENV.DURATION || "1m30s";
 const IS_STEP_RAMP     = __ENV.STEP_RAMP === "true";
+
+// Phân giải chuỗi thời gian thành giây
+function parseDurationSec(dStr) {
+  let totalSec = 0;
+  const m = dStr.match(/(\d+)m/);
+  const s = dStr.match(/(\d+)s/);
+  if (m) totalSec += parseInt(m[1], 10) * 60;
+  if (s) totalSec += parseInt(s[1], 10);
+  return totalSec > 0 ? totalSec : 90;
+}
+
+// ============================================================
+// Tính toán vòng đời: Vào trước - Ra sau (Tránh mất tin giả)
+// ============================================================
+const SEND_DURATION_SEC   = parseDurationSec(DURATION_STR);
+const SENDER_START_DELAY  = 10; // Chờ 10s để 100% receiver kết nối & subscribe xong
+const RECEIVER_DRAIN_TIME = 10; // Receiver sống thêm 10s sau khi sender dừng để hứng trọn tin cuối
+const RECEIVER_TOTAL_SEC  = SENDER_START_DELAY + SEND_DURATION_SEC + RECEIVER_DRAIN_TIME;
 
 // Custom Metrics
 const e2eLatency  = new Trend("e2e_message_latency_ms", true);
@@ -38,20 +58,23 @@ const errorRate   = new Rate("message_error_rate");
 
 export const options = {
   scenarios: {
+    // 1. Receivers: Vào trước ở giây 0, sống bao trùm toàn bộ bài test
     receivers: {
       executor:     "constant-vus",
       exec:         "receiverScenario",
       vus:          TOTAL_PAIRS,
-      duration:     DURATION_STR,
-      gracefulStop: "30s",
+      startTime:    "0s",
+      duration:     `${RECEIVER_TOTAL_SEC}s`,
+      gracefulStop: "5s",
     },
+    // 2. Senders: Bắt đầu sau 10s (khi receivers đã sẵn sàng), dừng trước receivers
     senders: {
       executor:     "constant-vus",
       exec:         "senderScenario",
       vus:          TOTAL_PAIRS,
-      duration:     DURATION_STR,
-      startTime:    "5s",
-      gracefulStop: "30s",
+      startTime:    `${SENDER_START_DELAY}s`,
+      duration:     `${SEND_DURATION_SEC}s`,
+      gracefulStop: "5s",
     },
   },
   thresholds: {
@@ -69,6 +92,7 @@ function formatUsername(num) {
 // ============================================================
 export function setup() {
   console.log(`==> [Setup] Bắt đầu khởi tạo ${TOTAL_PAIRS} cặp chat 1-1 (${TOTAL_PAIRS * 2} VUs)...`);
+  console.log(`==> [Setup] Thời lượng gửi: ${SEND_DURATION_SEC}s (Receivers chạy ${RECEIVER_TOTAL_SEC}s để drain sạch tin)`);
   console.log(`==> [Setup] Tần suất gửi tin: ${BASE_INTERVAL_MS}ms / tin (Dự kiến: ${Math.round(1000 / BASE_INTERVAL_MS * TOTAL_PAIRS)} msg/s)`);
   if (IS_STEP_RAMP) {
     console.log(`==> [Setup] Chế độ Step Ramp: BẬT (sẽ tăng dần tốc độ gửi theo các giai đoạn)`);
@@ -126,7 +150,7 @@ export function receiverScenario(data) {
   stompSession({
     token:           pair.receiverToken,
     conversationIds: [pair.convId],
-    durationSeconds: 295,
+    durationSeconds: RECEIVER_TOTAL_SEC + 5,
     onMessage: (msg) => {
       if (msg && typeof msg.content === "string" && msg.content.startsWith("k6|")) {
         const parts  = msg.content.split("|");
@@ -152,7 +176,7 @@ export function senderScenario(data) {
   stompSession({
     token:           pair.senderToken,
     conversationIds: [],
-    durationSeconds: 290,
+    durationSeconds: SEND_DURATION_SEC + 5,
     onConnected: (socket, sendFrame) => {
       const scheduleNextSend = () => {
         let currentInterval = BASE_INTERVAL_MS;
@@ -183,8 +207,9 @@ export function senderScenario(data) {
             clientMessageId: clientMsgId,
           });
           msgSent.add(1);
+          errorRate.add(false); // Thành công -> mẫu số tăng, lỗi = 0
         } catch (err) {
-          errorRate.add(1);
+          errorRate.add(true);  // Thất bại -> lỗi = 1
         }
 
         socket.setTimeout(scheduleNextSend, Math.max(10, currentInterval));
@@ -196,3 +221,32 @@ export function senderScenario(data) {
   });
 }
 
+// ============================================================
+// Báo cáo tổng kết toàn vẹn dữ liệu (Data Integrity Summary)
+// ============================================================
+export function handleSummary(data) {
+  const sent = data.metrics.messages_sent_total ? data.metrics.messages_sent_total.values.count : 0;
+  const received = data.metrics.messages_received_total ? data.metrics.messages_received_total.values.count : 0;
+  const lost = Math.max(0, sent - received);
+  const lossRate = sent > 0 ? ((lost / sent) * 100).toFixed(2) : "0.00";
+  const deliveryRate = sent > 0 ? ((received / sent) * 100).toFixed(2) : "100.00";
+
+  const isPerfect = (lost === 0 && sent > 0);
+  const statusIcon = isPerfect ? "✅ [PASSED]" : (lost <= sent * 0.005 ? "⚠️ [ACCEPTABLE]" : "❌ [FAILED]");
+
+  const integrityBanner = `
+================================================================================
+  BÁO CÁO TOÀN VẸN DỮ LIỆU & THẤT THOÁT TIN NHẮN (DATA INTEGRITY REPORT)
+================================================================================
+  ${statusIcon} Trạng thái toàn vẹn dữ liệu:
+    - Tổng tin nhắn gửi đi (Sent)      : ${sent} tin
+    - Tổng tin nhắn nhận được (Received): ${received} tin
+    - Số tin nhắn thất thoát (Lost)    : ${lost} tin (${lossRate}%)
+    - Tỷ lệ phát thành công (Delivery) : ${deliveryRate}%
+================================================================================
+`;
+
+  return {
+    stdout: integrityBanner + "\n" + textSummary(data, { indent: " ", enableColors: true }),
+  };
+}
