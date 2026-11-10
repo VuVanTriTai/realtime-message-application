@@ -46,7 +46,18 @@ function parseDurationSec(dStr) {
 // Tính toán vòng đời: Vào trước - Ra sau (Tránh mất tin giả)
 // ============================================================
 const SEND_DURATION_SEC   = parseDurationSec(DURATION_STR);
-const SENDER_START_DELAY  = 15; // Chờ 15s để 100% receiver kết nối & subscribe xong (đủ cho LAN)
+
+// SENDER_START_DELAY: Chờ đủ lâu để 100% receiver hoàn thành SUBSCRIBE trước khi gửi tin.
+// Tại sao cần đủ lớn?
+//   - Mỗi receiver phải qua: TCP handshake + STOMP CONNECT + CONNECTED + SUBSCRIBE
+//   - Với 100 VU đồng thời + Cold JVM: server xử lý backlog → một số con mất 5-10s
+//   - Nếu sender gửi tin TRƯỚC khi receiver SUBSCRIBE xong → Redis Pub/Sub drop luôn
+//   - markOutboxDone() đã được gọi → OutboxPoller KHÔNG retry → tin mất thật sự
+// Quy tắc: SENDER_START_DELAY >= (thời gian SUBSCRIBE của receiver chậm nhất)
+// Warm JVM: 5-8s là đủ. Cold JVM: có thể cần 15-20s.
+// Giá trị 25s đủ an toàn cho cả cold JVM trên LAN.
+const SENDER_START_DELAY  = parseInt(__ENV.SENDER_DELAY || "25", 10);
+
 const RECEIVER_DRAIN_TIME = 30; // Receiver sống thêm 30s: đủ cho Outbox Poller (1s/poll) flush hết tin chậm
 const RECEIVER_TOTAL_SEC  = SENDER_START_DELAY + SEND_DURATION_SEC + RECEIVER_DRAIN_TIME;
 
@@ -93,6 +104,7 @@ function formatUsername(num) {
 export function setup() {
   console.log(`==> [Setup] Bắt đầu khởi tạo ${TOTAL_PAIRS} cặp chat 1-1 (${TOTAL_PAIRS * 2} VUs)...`);
   console.log(`==> [Setup] Thời lượng gửi: ${SEND_DURATION_SEC}s (Receivers chạy ${RECEIVER_TOTAL_SEC}s để drain sạch tin)`);
+  console.log(`==> [Setup] Sender bắt đầu sau: ${SENDER_START_DELAY}s (override bằng -e SENDER_DELAY=N)`);
   console.log(`==> [Setup] Tần suất gửi tin: ${BASE_INTERVAL_MS}ms / tin (Dự kiến: ${Math.round(1000 / BASE_INTERVAL_MS * TOTAL_PAIRS)} msg/s)`);
   if (IS_STEP_RAMP) {
     console.log(`==> [Setup] Chế độ Step Ramp: BẬT (sẽ tăng dần tốc độ gửi theo các giai đoạn)`);
