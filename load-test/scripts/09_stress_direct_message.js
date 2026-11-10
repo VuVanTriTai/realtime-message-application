@@ -47,7 +47,7 @@ function parseDurationSec(dStr) {
 // ============================================================
 const SEND_DURATION_SEC   = parseDurationSec(DURATION_STR);
 const SENDER_START_DELAY  = 15; // Chờ 15s để 100% receiver kết nối & subscribe xong (đủ cho LAN)
-const RECEIVER_DRAIN_TIME = 20; // Receiver sống thêm 20s sau khi sender dừng (đủ hứng tin bay qua LAN)
+const RECEIVER_DRAIN_TIME = 30; // Receiver sống thêm 30s: đủ cho Outbox Poller (1s/poll) flush hết tin chậm
 const RECEIVER_TOTAL_SEC  = SENDER_START_DELAY + SEND_DURATION_SEC + RECEIVER_DRAIN_TIME;
 
 // Custom Metrics
