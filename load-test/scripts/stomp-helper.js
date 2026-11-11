@@ -78,6 +78,8 @@ export function parseFrame(raw) {
 export function stompSession({
   token,
   conversationIds = [],
+  userTopics = [],
+  destinations = [],
   durationSeconds = 60,
   onMessage,
   onConnected,
@@ -120,6 +122,26 @@ export function stompSession({
               socket.send(buildFrame("SUBSCRIBE", {
                 id:          `sub-${subscriptionId++}`,
                 destination: `/topic/conversation.${convId}`,
+              }));
+            });
+          }
+
+          // Subscribe vao kenh ca nhan (/topic/user.{userId})
+          if (userTopics && userTopics.length > 0) {
+            userTopics.forEach((userId) => {
+              socket.send(buildFrame("SUBSCRIBE", {
+                id:          `sub-${subscriptionId++}`,
+                destination: `/topic/user.${userId}`,
+              }));
+            });
+          }
+
+          // Subscribe vao cac custom destinations tuy y
+          if (destinations && destinations.length > 0) {
+            destinations.forEach((dest) => {
+              socket.send(buildFrame("SUBSCRIBE", {
+                id:          `sub-${subscriptionId++}`,
+                destination: dest,
               }));
             });
           }

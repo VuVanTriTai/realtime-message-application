@@ -86,6 +86,12 @@ public interface ConversationMemberRepository extends JpaRepository<Conversation
     List<Long> findUserIdsByConversationId(@Param("conversationId") Long conversationId);
 
     /**
+     * Lấy thông tin thành viên (userId, lastReadMessageId) để fan-out inbox event tới kênh cá nhân /topic/user.{userId}.
+     */
+    @Query("SELECT cm.user.id, cm.lastReadMessageId FROM ConversationMember cm WHERE cm.conversation.id = :conversationId")
+    List<Object[]> findMemberIdsAndLastReadByConversationId(@Param("conversationId") Long conversationId);
+
+    /**
      * Lấy tất cả conversationId mà user tham gia.
      * Dùng khi disconnect: publish PRESENCE offline tới tất cả conversation của user.
      */

@@ -19,6 +19,7 @@
  */
 
 import { sleep, check } from "k6";
+import exec from "k6/execution";
 import { Trend, Counter, Rate } from "k6/metrics";
 import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
 import { stompSession } from "./stomp-helper.js";
@@ -72,21 +73,20 @@ export const options = {
   scenarios: {
     // 1. Receivers: Vào trước ở giây 0, sống bao trùm toàn bộ bài test
     receivers: {
-      executor:     "constant-vus",
+      executor:     "per-vu-iterations",
       exec:         "receiverScenario",
       vus:          TOTAL_PAIRS,
-      startTime:    "0s",
-      duration:     `${RECEIVER_TOTAL_SEC}s`,
-      gracefulStop: "15s",
+      iterations:   1,
+      maxDuration:  `${RECEIVER_TOTAL_SEC + 30}s`,
     },
-    // 2. Senders: Bắt đầu sau 15s (khi receivers đã sẵn sàng), dừng trước receivers
+    // 2. Senders: Bắt đầu sau khi receivers đã sẵn sàng, dừng trước receivers
     senders: {
-      executor:     "constant-vus",
+      executor:     "per-vu-iterations",
       exec:         "senderScenario",
       vus:          TOTAL_PAIRS,
+      iterations:   1,
       startTime:    `${SENDER_START_DELAY}s`,
-      duration:     `${SEND_DURATION_SEC}s`,
-      gracefulStop: "15s",
+      maxDuration:  `${SEND_DURATION_SEC + 30}s`,
     },
   },
   thresholds: {
@@ -107,6 +107,11 @@ export function setup() {
   console.log(`==> [Setup] Thời lượng gửi: ${SEND_DURATION_SEC}s (Receivers chạy ${RECEIVER_TOTAL_SEC}s để drain sạch tin)`);
   console.log(`==> [Setup] Sender bắt đầu sau: ${SENDER_START_DELAY}s (override bằng -e SENDER_DELAY=N)`);
   console.log(`==> [Setup] Tần suất gửi tin: ${BASE_INTERVAL_MS}ms / tin (Dự kiến: ${Math.round(1000 / BASE_INTERVAL_MS * TOTAL_PAIRS)} msg/s)`);
+  if (__ENV.USE_USER_CHANNEL === "true") {
+    console.log(`==> [Setup] Mô hình: SINGLE USER CHANNEL (/topic/user.{userId}) [Enterprise Standard]`);
+  } else {
+    console.log(`==> [Setup] Mô hình: CONVERSATION CHANNEL (/topic/conversation.{convId}) [Active Chat Room]`);
+  }
   if (IS_STEP_RAMP) {
     console.log(`==> [Setup] Chế độ Step Ramp: BẬT (sẽ tăng dần tốc độ gửi theo các giai đoạn)`);
   }
@@ -130,12 +135,13 @@ export function setup() {
 
     if (directConv) {
       pairs.push({
-        pairIndex:     i,
-        convId:        directConv.id,
-        senderName:    senderName,
-        receiverName:  receiverName,
-        senderToken:   tokenA,
-        receiverToken: tokenB,
+        pairIndex:      i,
+        convId:         directConv.id,
+        senderName:     senderName,
+        receiverName:   receiverName,
+        receiverUserId: directConv.otherUserId,
+        senderToken:    tokenA,
+        receiverToken:  tokenB,
       });
     }
 
@@ -158,15 +164,32 @@ export function setup() {
 // Scenario 1: Người nhận (User B) qua WebSocket STOMP
 // ============================================================
 export function receiverScenario(data) {
-  const pair = data.pairs[(__VU - 1) % data.pairs.length];
+  const pairIndex = exec.scenario.iterationInTest % data.pairs.length;
+  const pair = data.pairs[pairIndex];
+
+  // Hỗ trợ 2 chế độ:
+  // 1. USE_USER_CHANNEL=true: Subscribe DUY NHẤT kênh cá nhân /topic/user.{userId} (Mô hình Enterprise)
+  // 2. Mặc định: Subscribe /topic/conversation.{convId} (Mô hình phòng chat chi tiết)
+  const isUserChannel = __ENV.USE_USER_CHANNEL === "true";
 
   stompSession({
     token:           pair.receiverToken,
-    conversationIds: [pair.convId],
+    conversationIds: isUserChannel ? [] : [pair.convId],
+    userTopics:      isUserChannel && pair.receiverUserId ? [pair.receiverUserId] : [],
     durationSeconds: RECEIVER_TOTAL_SEC + 5,
     onMessage: (msg) => {
-      if (msg && typeof msg.content === "string" && msg.content.startsWith("k6|")) {
-        const parts  = msg.content.split("|");
+      // Trích xuất nội dung tin nhắn: hỗ trợ cả MessageResponse lẫn UserInboxEvent
+      let content = null;
+      if (msg && typeof msg.content === "string") {
+        content = msg.content;
+      } else if (msg && msg.lastMessage && typeof msg.lastMessage.content === "string") {
+        content = msg.lastMessage.content;
+      } else if (msg && msg.message && typeof msg.message.content === "string") {
+        content = msg.message.content;
+      }
+
+      if (content && content.startsWith("k6|")) {
+        const parts  = content.split("|");
         const sentAt = parseInt(parts[1], 10);
 
         if (!isNaN(sentAt)) {
@@ -183,7 +206,8 @@ export function receiverScenario(data) {
 // Scenario 2: Người gửi (User A) qua WebSocket STOMP
 // ============================================================
 export function senderScenario(data) {
-  const pair = data.pairs[(__VU - 1) % data.pairs.length];
+  const pairIndex = exec.scenario.iterationInTest % data.pairs.length;
+  const pair = data.pairs[pairIndex];
   const startTime = Date.now();
 
   stompSession({
