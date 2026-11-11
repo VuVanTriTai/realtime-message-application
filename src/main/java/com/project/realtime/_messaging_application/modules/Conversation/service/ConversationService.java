@@ -37,7 +37,8 @@ public class ConversationService {
     private final MessageRepository            messageRepo;
     private final PresenceService              presenceService;
     private final FriendshipRepository         friendshipRepo;
-    private final RedisMessagePublisher        redisPublisher;
+    private final RedisMessagePublisher           redisPublisher;
+    private final ConversationMemberCacheService  memberCacheService;
 
     public ConversationService(ConversationRepository conversationRepo,
                                ConversationMemberRepository memberRepo,
@@ -45,14 +46,16 @@ public class ConversationService {
                                MessageRepository messageRepo,
                                PresenceService presenceService,
                                FriendshipRepository friendshipRepo,
-                               RedisMessagePublisher redisPublisher) {
-        this.conversationRepo = conversationRepo;
-        this.memberRepo       = memberRepo;
-        this.userRepo         = userRepo;
-        this.messageRepo      = messageRepo;
-        this.presenceService  = presenceService;
-        this.friendshipRepo   = friendshipRepo;
-        this.redisPublisher   = redisPublisher;
+                               RedisMessagePublisher redisPublisher,
+                               ConversationMemberCacheService memberCacheService) {
+        this.conversationRepo    = conversationRepo;
+        this.memberRepo          = memberRepo;
+        this.userRepo            = userRepo;
+        this.messageRepo         = messageRepo;
+        this.presenceService     = presenceService;
+        this.friendshipRepo      = friendshipRepo;
+        this.redisPublisher      = redisPublisher;
+        this.memberCacheService  = memberCacheService;
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -286,6 +289,9 @@ public class ConversationService {
         ConversationMember newMember = ConversationMember.create(conv, newUser, MemberRole.MEMBER);
         memberRepo.save(newMember);
 
+        // Invalidate cache vì danh sách thành viên đã thay đổi
+        memberCacheService.evict(conversationId);
+
         // Bắn WebSocket realtime tới user vừa được thêm vào nhóm
         try {
             Message lastMsg = conv.getLastMessageId() != null
@@ -309,6 +315,9 @@ public class ConversationService {
                     "Dùng API rời nhóm để tự thoát");
         }
         memberRepo.deleteByConversationIdAndUserId(conversationId, targetUserId);
+
+        // Invalidate cache vì danh sách thành viên đã thay đổi
+        memberCacheService.evict(conversationId);
 
         // Bắn WebSocket thông báo cho user bị kick
         try {
@@ -362,6 +371,9 @@ public class ConversationService {
 
         // Xoá membership của người rời
         memberRepo.deleteByConversationIdAndUserId(conversationId, userId);
+
+        // Invalidate cache vì danh sách thành viên đã thay đổi
+        memberCacheService.evict(conversationId);
     }
 
     /**

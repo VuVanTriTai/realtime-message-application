@@ -2,9 +2,8 @@ package com.project.realtime._messaging_application.websocket.pubsub;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.project.realtime._messaging_application.modules.Conversation.dto.UserInboxEvent;
-import com.project.realtime._messaging_application.modules.Conversation.repository.ConversationMemberRepository;
+import com.project.realtime._messaging_application.modules.Conversation.service.ConversationMemberCacheService;
 import com.project.realtime._messaging_application.modules.Message.dto.MessageResponse;
-import com.project.realtime._messaging_application.modules.Message.repository.MessageRepository;
 import com.project.realtime._messaging_application.websocket.ChatWebSocketHandler.ReadReceipt;
 import com.project.realtime._messaging_application.websocket.ChatWebSocketHandler.TypingEvent;
 import com.project.realtime._messaging_application.websocket.WebSocketEventListener.PresenceEvent;
@@ -38,28 +37,33 @@ import java.util.concurrent.TimeUnit;
  *   TYPING       → /topic/conversation.{id}.typing
  *   READ_RECEIPT → /topic/conversation.{id}.read
  *   PRESENCE     → /topic/conversation.{id}.presence
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * OPTIMIZATION (Hot Path – Zero DB in fanout):
+ *   - Danh sách thành viên được cache In-Memory (Caffeine, TTL 5 phút).
+ *   - countUnread bị loại khỏi hot path: Frontend tự tăng badge +1 khi nhận
+ *     event. Đây là pattern chuẩn của Slack/Telegram/Discord.
+ *   - Toàn bộ fanout chạy ZERO Database Connection.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 @Component
 public class RedisMessageSubscriber implements MessageListener {
 
     private static final Logger log = LoggerFactory.getLogger(RedisMessageSubscriber.class);
 
-    private final SimpMessagingTemplate        messagingTemplate;
-    private final ObjectMapper                 objectMapper;
-    private final Timer                        fanoutDurationTimer;
-    private final ConversationMemberRepository memberRepo;
-    private final MessageRepository            messageRepo;
+    private final SimpMessagingTemplate           messagingTemplate;
+    private final ObjectMapper                    objectMapper;
+    private final Timer                           fanoutDurationTimer;
+    private final ConversationMemberCacheService  memberCache;
 
     public RedisMessageSubscriber(SimpMessagingTemplate messagingTemplate,
                                   ObjectMapper objectMapper,
                                   Timer fanoutDurationTimer,
-                                  ConversationMemberRepository memberRepo,
-                                  MessageRepository messageRepo) {
+                                  ConversationMemberCacheService memberCache) {
         this.messagingTemplate   = messagingTemplate;
         this.objectMapper        = objectMapper;
         this.fanoutDurationTimer = fanoutDurationTimer;
-        this.memberRepo          = memberRepo;
-        this.messageRepo         = messageRepo;
+        this.memberCache         = memberCache;
     }
 
     /**
@@ -137,26 +141,27 @@ public class RedisMessageSubscriber implements MessageListener {
 
     /**
      * Bắn event rút gọn tới kênh cá nhân /topic/user.{userId} của từng thành viên.
+     *
+     * ─── ZERO DB HOT PATH ───
+     * - Danh sách userId: Lấy từ Caffeine Cache (RAM) thay vì query PostgreSQL.
+     *   Cache được warm lần đầu khi conversation có tin nhắn, TTL 5 phút.
+     * - unreadCount: Không còn SELECT COUNT(*) FROM messages.
+     *   Thay vào đó gửi unreadIncrement=1 để Frontend tự tăng badge +1.
+     *   Pattern này chuẩn với Slack / Telegram / Discord.
+     * ────────────────────────
      */
     private void fanoutToUserChannels(Long convId, MessageResponse msg) {
         try {
-            List<Object[]> members = memberRepo.findMemberIdsAndLastReadByConversationId(convId);
+            // [Cache] Lấy danh sách userId từ Caffeine – ZERO DB nếu cache hit
+            List<Long> memberIds = memberCache.getMemberIds(convId);
             Long senderId = (msg.sender() != null) ? msg.sender().id() : null;
 
-            for (Object[] row : members) {
-                Long memberId = ((Number) row[0]).longValue();
-                Long lastReadId = row[1] != null ? ((Number) row[1]).longValue() : null;
+            for (Long memberId : memberIds) {
+                // unreadIncrement=1: Frontend tự cộng badge, không cần server đếm DB
+                // senderId nhận 0 (người gửi không tăng badge của chính họ)
+                long unreadIncrement = (senderId != null && senderId.equals(memberId)) ? 0L : 1L;
 
-                long unreadCount = 0L;
-                if (senderId == null || !senderId.equals(memberId)) {
-                    try {
-                        unreadCount = messageRepo.countUnread(convId, memberId, lastReadId);
-                    } catch (Exception ex) {
-                        log.warn("Failed to count unread for convId={} memberId={}: {}", convId, memberId, ex.getMessage());
-                    }
-                }
-
-                UserInboxEvent inboxEvent = UserInboxEvent.of(convId, msg, unreadCount);
+                UserInboxEvent inboxEvent = UserInboxEvent.of(convId, msg, unreadIncrement);
                 messagingTemplate.convertAndSend("/topic/user." + memberId, inboxEvent);
             }
         } catch (Exception e) {

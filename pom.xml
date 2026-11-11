@@ -178,6 +178,19 @@
 			<artifactId>micrometer-registry-prometheus</artifactId>
 		</dependency>
 
+		<!-- ================================================================ -->
+		<!-- Caffeine: In-memory cache cho conversation members (Hot Path)   -->
+		<!-- ================================================================ -->
+		<dependency>
+			<groupId>com.github.ben-manes.caffeine</groupId>
+			<artifactId>caffeine</artifactId>
+		</dependency>
+		<!-- Spring Cache abstraction (sử dụng Caffeine làm backend) -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-cache</artifactId>
+		</dependency>
+
 		<!-- Commons Pool2: bat buoc de Lettuce connection pool hoat dong -->
 		<dependency>
 			<groupId>org.apache.commons</groupId>

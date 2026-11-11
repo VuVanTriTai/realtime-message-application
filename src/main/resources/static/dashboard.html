@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Realtime Messaging - Live System Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #38bdf8;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--card-border);
+    }
+
+    .title {
+      font-size: 24px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .live-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: rgba(34, 197, 94, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--success);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.2); }
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      transition: transform 0.15s, border-color 0.15s;
+    }
+
+    .card:hover {
+      border-color: #475569;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .card-value {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+
+    .card-unit {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .card-sub {
+      margin-top: 10px;
+      font-size: 13px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .progress-bar-bg {
+      width: 100%;
+      height: 6px;
+      background: #334155;
+      border-radius: 9999px;
+      margin-top: 10px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--primary);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+
+    .badge-danger {
+      color: var(--danger);
+      background: rgba(239, 68, 68, 0.15);
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    .badge-ok {
+      color: var(--success);
+      background: rgba(34, 197, 94, 0.15);
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-weight: 600;
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-muted);
+      margin: 20px 0 12px 0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .server-input-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .server-input {
+      background: #0f172a;
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 13px;
+      width: 180px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="title">
+      <span>🚀 Realtime Messaging System Monitor</span>
+      <div id="liveBadge" class="live-badge">
+        <span class="dot"></span>
+        <span id="liveText">LIVE</span>
+      </div>
+    </div>
+    <div class="server-input-box">
+      <span>Host:</span>
+      <input id="serverHost" class="server-input" value="http://localhost:8080" />
+      <span id="lastUpdated" style="margin-left: 8px;">--:--:--</span>
+    </div>
+  </div>
+
+  <div class="section-title">1. Realtime & WebSocket Activity</div>
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Active WebSocket Sessions</div>
+      <div class="card-value" id="wsActive">--</div>
+      <div class="card-sub">
+        <span>Tổng kết nối online</span>
+        <span id="wsStatus" class="badge-ok">CONNECTED</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Messages Sent (Total)</div>
+      <div class="card-value" id="msgSent">--</div>
+      <div class="card-sub">
+        <span>Tích lũy qua WebSocket</span>
+        <span id="tpsRate">-- msg/s</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Fanout Duration (Avg)</div>
+      <div class="card-value">
+        <span id="fanoutLatency">--</span>
+        <span class="card-unit">ms</span>
+      </div>
+      <div class="card-sub">
+        <span>User Channel Fanout</span>
+        <span id="fanoutMax">max: -- ms</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">System Status</div>
+      <div class="card-value" id="sysHealth">--</div>
+      <div class="card-sub">
+        <span id="healthComponents">DB: -- | Redis: --</span>
+        <span id="uptime">Uptime: --</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">2. Database Connection Pool (HikariCP)</div>
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Active Connections (In Use)</div>
+      <div class="card-value">
+        <span id="hikariActive">--</span>
+        <span class="card-unit" id="hikariMax">/ --</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div id="hikariBar" class="progress-bar-fill"></div>
+      </div>
+      <div class="card-sub">
+        <span id="hikariUsagePct">0% capacity</span>
+        <span id="hikariIdle">Idle: --</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Pending Connection Requests (Queue)</div>
+      <div class="card-value" id="hikariPending">0</div>
+      <div class="card-sub">
+        <span>Số luồng đang chờ DB</span>
+        <span id="hikariPendingBadge" class="badge-ok">OK (Không nghẽn)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">3. Server Hardware & JVM Resources</div>
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Process CPU Usage</div>
+      <div class="card-value">
+        <span id="cpuUsage">--</span>
+        <span class="card-unit">%</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div id="cpuBar" class="progress-bar-fill"></div>
+      </div>
+      <div class="card-sub">
+        <span>JVM CPU Core Load</span>
+        <span id="cpuStatus">Normal</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">JVM Heap Memory Used</div>
+      <div class="card-value">
+        <span id="jvmMemUsed">--</span>
+        <span class="card-unit">MB</span>
+      </div>
+      <div class="progress-bar-bg">
+        <div id="memBar" class="progress-bar-fill"></div>
+      </div>
+      <div class="card-sub">
+        <span id="jvmMemMax">Max: -- MB</span>
+        <span id="jvmMemPct">0%</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let prevMsgSent = null;
+    let prevTimestamp = null;
+
+    async function fetchMetric(host, name) {
+      try {
+        const res = await fetch(`${host}/actuator/metrics/${name}`);
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (data && data.measurements && data.measurements.length > 0) {
+          return data.measurements[0].value;
+        }
+        return null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function fetchMetricFull(host, name) {
+      try {
+        const res = await fetch(`${host}/actuator/metrics/${name}`);
+        if (!res.ok) return null;
+        return await res.json();
+      } catch (e) {
+        return null;
+      }
+    }
+
+    async function refreshDashboard() {
+      const host = document.getElementById("serverHost").value.trim();
+      const now = new Date();
+      document.getElementById("lastUpdated").textContent = now.toLocaleTimeString();
+
+      try {
+        // Health check
+        const healthRes = await fetch(`${host}/actuator/health`).catch(() => null);
+        if (healthRes && healthRes.ok) {
+          const health = await healthRes.json();
+          document.getElementById("sysHealth").textContent = health.status;
+          document.getElementById("sysHealth").style.color = health.status === "UP" ? "var(--success)" : "var(--danger)";
+          
+          let dbStatus = health.components?.db?.status || "--";
+          let redisStatus = health.components?.redis?.status || "--";
+          document.getElementById("healthComponents").textContent = `DB: ${dbStatus} | Redis: ${redisStatus}`;
+          
+          document.getElementById("liveBadge").style.display = "inline-flex";
+          document.getElementById("liveText").textContent = "LIVE";
+        } else {
+          document.getElementById("sysHealth").textContent = "DOWN";
+          document.getElementById("sysHealth").style.color = "var(--danger)";
+          document.getElementById("liveText").textContent = "OFFLINE";
+          return;
+        }
+
+        // 1. WebSocket Sessions
+        const wsSessions = await fetchMetric(host, "chat.ws.sessions.active");
+        document.getElementById("wsActive").textContent = wsSessions !== null ? Math.round(wsSessions) : "0";
+
+        // 2. Messages Sent & TPS
+        const sent = await fetchMetric(host, "chat.messages.sent");
+        if (sent !== null) {
+          document.getElementById("msgSent").textContent = Math.round(sent).toLocaleString();
+          const curTime = Date.now();
+          if (prevMsgSent !== null && prevTimestamp !== null) {
+            const timeDiffSec = (curTime - prevTimestamp) / 1000;
+            if (timeDiffSec > 0.5) {
+              const diffMsg = sent - prevMsgSent;
+              const tps = Math.max(0, Math.round(diffMsg / timeDiffSec));
+              document.getElementById("tpsRate").textContent = `~${tps} msg/s`;
+            }
+          }
+          prevMsgSent = sent;
+          prevTimestamp = curTime;
+        }
+
+        // 3. Fanout Duration
+        const fanoutData = await fetchMetricFull(host, "chat.fanout.duration");
+        if (fanoutData && fanoutData.measurements) {
+          const totalTime = fanoutData.measurements.find(m => m.statistic === "TOTAL_TIME")?.value || 0;
+          const count = fanoutData.measurements.find(m => m.statistic === "COUNT")?.value || 0;
+          const max = fanoutData.measurements.find(m => m.statistic === "MAX")?.value || 0;
+          const avgMs = count > 0 ? (totalTime / count * 1000).toFixed(1) : "0";
+          document.getElementById("fanoutLatency").textContent = avgMs;
+          document.getElementById("fanoutMax").textContent = `max: ${(max * 1000).toFixed(1)} ms`;
+        }
+
+        // 4. Uptime
+        const uptimeSec = await fetchMetric(host, "process.uptime");
+        if (uptimeSec !== null) {
+          const mins = Math.floor(uptimeSec / 60);
+          const hrs = Math.floor(mins / 60);
+          document.getElementById("uptime").textContent = `Uptime: ${hrs}h ${mins % 60}m`;
+        }
+
+        // 5. HikariCP Pool
+        const hikariActive = await fetchMetric(host, "hikaricp.connections.active");
+        const hikariIdle = await fetchMetric(host, "hikaricp.connections.idle");
+        const hikariMax = await fetchMetric(host, "hikaricp.connections.max");
+        const hikariPending = await fetchMetric(host, "hikaricp.connections.pending");
+
+        if (hikariActive !== null) {
+          document.getElementById("hikariActive").textContent = Math.round(hikariActive);
+          const maxVal = hikariMax !== null ? Math.round(hikariMax) : 25;
+          document.getElementById("hikariMax").textContent = `/ ${maxVal}`;
+          document.getElementById("hikariIdle").textContent = `Idle: ${hikariIdle !== null ? Math.round(hikariIdle) : 0}`;
+          
+          const usagePct = Math.round((hikariActive / maxVal) * 100);
+          document.getElementById("hikariUsagePct").textContent = `${usagePct}% capacity`;
+          document.getElementById("hikariBar").style.width = `${Math.min(100, usagePct)}%`;
+          document.getElementById("hikariBar").style.background = usagePct > 80 ? "var(--danger)" : "var(--primary)";
+        }
+
+        if (hikariPending !== null) {
+          const pendingVal = Math.round(hikariPending);
+          document.getElementById("hikariPending").textContent = pendingVal;
+          const pendingBadge = document.getElementById("hikariPendingBadge");
+          if (pendingVal > 0) {
+            pendingBadge.textContent = `NGHẼN (${pendingVal} luồng chờ)`;
+            pendingBadge.className = "badge-danger";
+          } else {
+            pendingBadge.textContent = "OK (Không nghẽn)";
+            pendingBadge.className = "badge-ok";
+          }
+        }
+
+        // 6. CPU Usage
+        const cpu = await fetchMetric(host, "process.cpu.usage");
+        if (cpu !== null) {
+          const cpuPct = (cpu * 100).toFixed(1);
+          document.getElementById("cpuUsage").textContent = cpuPct;
+          document.getElementById("cpuBar").style.width = `${Math.min(100, cpu * 100)}%`;
+          document.getElementById("cpuBar").style.background = cpu > 0.8 ? "var(--danger)" : "var(--primary)";
+          document.getElementById("cpuStatus").textContent = cpu > 0.8 ? "High Load" : "Normal";
+        }
+
+        // 7. JVM Memory
+        const memUsedBytes = await fetchMetric(host, "jvm.memory.used");
+        const memMaxBytes = await fetchMetric(host, "jvm.memory.max");
+        if (memUsedBytes !== null) {
+          const usedMb = Math.round(memUsedBytes / (1024 * 1024));
+          document.getElementById("jvmMemUsed").textContent = usedMb;
+          if (memMaxBytes && memMaxBytes > 0) {
+            const maxMb = Math.round(memMaxBytes / (1024 * 1024));
+            const memPct = Math.round((memUsedBytes / memMaxBytes) * 100);
+            document.getElementById("jvmMemMax").textContent = `Max: ${maxMb} MB`;
+            document.getElementById("jvmMemPct").textContent = `${memPct}%`;
+            document.getElementById("memBar").style.width = `${Math.min(100, memPct)}%`;
+            document.getElementById("memBar").style.background = memPct > 85 ? "var(--danger)" : "var(--primary)";
+          }
+        }
+
+      } catch (err) {
+        console.error("Dashboard refresh error:", err);
+      }
+    }
+
+    // Refresh every 1000ms
+    refreshDashboard();
+    setInterval(refreshDashboard, 1000);
+  </script>
+</body>
+</html>
