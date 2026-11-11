@@ -21,7 +21,9 @@ import java.util.concurrent.Executor;
 public class RedisConfig {
 
     /** Prefix pattern để subscribe tất cả channel chat (bao gồm cả conv và user) */
-    private static final String CHAT_CHANNEL_PATTERN = "chat:*";
+    private static final String CHAT_CHANNEL_PATTERN  = "chat:*";
+    /** Pattern riêng cho distributed cache invalidation – nhận CACHE_EVICT_CONV_MEMBERS */
+    private static final String CACHE_EVICT_PATTERN   = "cache:*";
 
     @Bean
     public ObjectMapper objectMapper() {
@@ -99,8 +101,12 @@ public class RedisConfig {
         container.setConnectionFactory(connectionFactory);
         container.setTaskExecutor(taskExecutor);
 
-        // Subscribe pattern – nhận tất cả event của mọi conversation
+        // Subscribe pattern – nhận tất cả event của mọi conversation và user
         container.addMessageListener(listenerAdapter, new PatternTopic(CHAT_CHANNEL_PATTERN));
+
+        // Subscribe pattern riêng cho distributed cache invalidation
+        // "cache:evict:convMembers:{convId}" → RedisMessageSubscriber.onMessage() xử lý CACHE_EVICT_CONV_MEMBERS
+        container.addMessageListener(listenerAdapter, new PatternTopic(CACHE_EVICT_PATTERN));
 
         return container;
     }

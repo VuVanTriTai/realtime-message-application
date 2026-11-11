@@ -12,17 +12,20 @@ import org.springframework.stereotype.Service;
  *
  * Convention dat ten channel: "chat:conv:{conversationId}"
  *
- * Co 2 method publish:
+ * Co 3 method publish:
  *  - publish(convId, eventType, Object)   : serialize Object -> JSON roi publish
  *  - publishRaw(convId, eventType, String): payload JSON da co san, dung boi OutboxPoller
+ *  - publishCacheEvict(convId)            : broadcast lệnh xóa cache tới tất cả instance
  */
 @Service
 public class RedisMessagePublisher {
 
     private static final Logger log = LoggerFactory.getLogger(RedisMessagePublisher.class);
 
-    public static final String CHANNEL_PREFIX      = "chat:conv:";
-    public static final String USER_CHANNEL_PREFIX = "chat:user:";
+    public static final String CHANNEL_PREFIX             = "chat:conv:";
+    public static final String USER_CHANNEL_PREFIX        = "chat:user:";
+    /** Channel riêng cho distributed cache invalidation – không lẫn vào luồng chat */
+    public static final String CACHE_EVICT_CHANNEL_PREFIX = "cache:evict:convMembers:";
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper        objectMapper;
@@ -32,9 +35,9 @@ public class RedisMessagePublisher {
         this.objectMapper  = objectMapper;
     }
 
-    // ────────────────────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────────
     // Public API
-    // ────────────────────────────────────────────────────────────────────────
+    // ──────────────────────────────────────────────────────────────────────────
 
     /**
      * Publish mot object bat ky len channel cua conversation.
@@ -51,7 +54,7 @@ public class RedisMessagePublisher {
     }
 
     /**
-     * Publish event cá nhân cho một user cụ thể (ví dụ: được add vào nhóm mới).
+     * Publish event ca nhan cho mot user cu the (vi du: duoc add vao nhom moi).
      */
     public void publishToUser(Long userId, RedisEventType eventType, Object payload) {
         try {
@@ -86,6 +89,31 @@ public class RedisMessagePublisher {
         } catch (JsonProcessingException e) {
             log.error("Failed to wrap envelope for chat:conv:{}: {}", conversationId, e.getMessage());
             throw new RuntimeException("Redis publishRaw failed", e);
+        }
+    }
+
+    /**
+     * Broadcast yêu cầu xóa cache thành viên tới TẤT CẢ instance trong cluster.
+     *
+     * Pattern Distributed Cache Invalidation via Pub/Sub:
+     *   - Channel: "cache:evict:convMembers:{convId}" (tách biệt khỏi luồng chat)
+     *   - Mọi instance subscribe "cache:*" đều nhận và tự evict local cache.
+     *   - Không throw exception để không làm hỏng luồng nghiệp vụ chính;
+     *     TTL 5 phút là safety net cuối cùng nếu publish thất bại.
+     *
+     * @param conversationId ID của conversation cần invalidate cache thành viên
+     */
+    public void publishCacheEvict(Long conversationId) {
+        try {
+            RedisEnvelope envelope     = new RedisEnvelope(
+                    RedisEventType.CACHE_EVICT_CONV_MEMBERS, conversationId, "{}");
+            String        envelopeJson = objectMapper.writeValueAsString(envelope);
+            String        channel      = CACHE_EVICT_CHANNEL_PREFIX + conversationId;
+
+            redisTemplate.convertAndSend(channel, envelopeJson);
+            log.debug("Published CACHE_EVICT_CONV_MEMBERS to channel '{}'", channel);
+        } catch (Exception e) {
+            log.warn("Failed to publish cache evict for convId={}: {}", conversationId, e.getMessage());
         }
     }
 }

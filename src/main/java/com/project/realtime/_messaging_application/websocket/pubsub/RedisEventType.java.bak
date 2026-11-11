@@ -1,0 +1,20 @@
+﻿package com.project.realtime._messaging_application.websocket.pubsub;
+
+/**
+ * CÃ¡c loáº¡i sá»± kiá»‡n Ä‘Æ°á»£c publish lÃªn Redis channel.
+ * Má»™t channel duy nháº¥t "chat:conv:{id}" chá»©a táº¥t cáº£ event cá»§a conversation Ä‘Ã³.
+ */
+public enum RedisEventType {
+    /** Tin nháº¯n má»›i */
+    NEW_MESSAGE,
+    /** Äang nháº­p / dá»«ng nháº­p */
+    TYPING,
+    /** ÄÃ£ Ä‘á»c Ä‘áº¿n messageId nÃ o Ä‘Ã³ */
+    READ_RECEIPT,
+    /** Thay Ä‘á»•i tráº¡ng thÃ¡i online/offline cá»§a má»™t thÃ nh viÃªn */
+    PRESENCE,
+    /** Cuá»™c trÃ² chuyá»‡n má»›i Ä‘Æ°á»£c táº¡o hoáº·c user Ä‘Æ°á»£c thÃªm vÃ o nhÃ³m */
+    CONVERSATION_JOINED,
+    /** User bá»‹ xoÃ¡ khá»i nhÃ³m (kick) */
+    CONVERSATION_LEFT
+}

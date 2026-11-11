@@ -131,6 +131,14 @@ public class RedisMessageSubscriber implements MessageListener {
                     log.debug("Forwarded {} to /topic/user.{}", envelope.getEventType(), convId);
                 }
 
+                case CACHE_EVICT_CONV_MEMBERS -> {
+                    // Distributed Cache Invalidation: xóa local Caffeine cache trên instance này.
+                    // Được trigger bởi publishCacheEvict() từ bất kỳ instance nào trong cluster
+                    // khi có thành viên Join/Leave/Kick khỏi conversation.
+                    memberCache.evictLocal(convId);
+                    log.debug("Cache invalidated for conv={} via Redis Pub/Sub", convId);
+                }
+
                 default -> log.warn("Unknown event type: {}", envelope.getEventType());
             }
 
