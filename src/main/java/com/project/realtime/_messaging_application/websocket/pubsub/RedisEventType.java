@@ -9,7 +9,9 @@ public enum RedisEventType {
     NEW_MESSAGE,
     /** Đang nhập / dừng nhập */
     TYPING,
-    /** Đã đọc đến messageId nào đó */
+    /** Đã nhận (delivered tới thiết bị) */
+    DELIVERY_RECEIPT,
+    /** Đã đọc đến messageId / seq nào đó */
     READ_RECEIPT,
     /** Thay đổi trạng thái online/offline của một thành viên */
     PRESENCE,

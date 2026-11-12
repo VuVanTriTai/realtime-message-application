@@ -55,19 +55,22 @@ public class ChatWebSocketHandler {
     private final RedisMessagePublisher       redisPublisher;
     private final WebSocketRateLimiterService wsRateLimiter;
     private final Executor                    taskExecutor;
+    private final com.project.realtime._messaging_application.modules.Conversation.service.ReceiptService receiptService;
 
     public ChatWebSocketHandler(MessageService messageService,
                                 SimpMessagingTemplate messagingTemplate,
                                 PresenceService presenceService,
                                 RedisMessagePublisher redisPublisher,
                                 WebSocketRateLimiterService wsRateLimiter,
-                                @Qualifier("taskExecutor") Executor taskExecutor) {
+                                @Qualifier("taskExecutor") Executor taskExecutor,
+                                com.project.realtime._messaging_application.modules.Conversation.service.ReceiptService receiptService) {
         this.messageService    = messageService;
         this.messagingTemplate = messagingTemplate;
         this.presenceService   = presenceService;
         this.redisPublisher    = redisPublisher;
         this.wsRateLimiter     = wsRateLimiter;
         this.taskExecutor      = taskExecutor;
+        this.receiptService    = receiptService;
     }
 
     // ================================================================
@@ -204,11 +207,29 @@ public class ChatWebSocketHandler {
     }
 
     // ================================================================
-    // Danh dau da doc — nhe, giu tren STOMP thread
+    // Đánh dấu đã nhận (delivered) — con trỏ deliveredSeq chỉ tăng
     // ================================================================
 
     /**
-     * Client gui den: /app/chat.read
+     * Client gửi đến: /app/chat.delivered (debounce 1-2s phía client)
+     */
+    @MessageMapping("/chat.delivered")
+    public void markDelivered(
+            @Payload DeliveredPayload payload,
+            SimpMessageHeaderAccessor accessor) {
+
+        User user = extractUser(accessor);
+        if (user == null || payload.conversationId() == null) return;
+
+        receiptService.recordDelivered(payload.conversationId(), user.getId(), payload.deliveredSeq());
+    }
+
+    // ================================================================
+    // Đánh dấu đã đọc (read) — con trỏ readSeq chỉ tăng
+    // ================================================================
+
+    /**
+     * Client gửi đến: /app/chat.read (debounce 0.5-1s phía client)
      */
     @MessageMapping("/chat.read")
     public void markRead(
@@ -216,18 +237,14 @@ public class ChatWebSocketHandler {
             SimpMessageHeaderAccessor accessor) {
 
         User user = extractUser(accessor);
-        if (user == null) return;
+        if (user == null || payload.conversationId() == null) return;
 
-        try {
-            ReadReceipt receipt = new ReadReceipt(
-                    payload.conversationId(), user.getId(), payload.messageId());
-
-            // Publish read receipt qua Redis
-            redisPublisher.publish(payload.conversationId(), RedisEventType.READ_RECEIPT, receipt);
-
-        } catch (Exception e) {
-            log.warn("markRead error user={}: {}", user.getUsername(), e.getMessage());
-        }
+        receiptService.recordRead(
+                payload.conversationId(),
+                user.getId(),
+                payload.readSeq(),
+                payload.messageId()
+        );
     }
 
     // ================================================================
@@ -239,9 +256,13 @@ public class ChatWebSocketHandler {
     public record TypingEvent(Long conversationId, Long userId,
                               String username, String displayName, boolean isTyping) {}
 
-    public record ReadPayload(Long conversationId, Long messageId) {}
+    public record DeliveredPayload(Long conversationId, Long deliveredSeq) {}
 
-    public record ReadReceipt(Long conversationId, Long userId, Long messageId) {}
+    public record DeliveryReceipt(Long conversationId, Long userId, Long seq) {}
+
+    public record ReadPayload(Long conversationId, Long messageId, Long readSeq) {}
+
+    public record ReadReceipt(Long conversationId, Long userId, Long messageId, Long seq) {}
 
     public record ErrorPayload(String code, String message) {}
 }

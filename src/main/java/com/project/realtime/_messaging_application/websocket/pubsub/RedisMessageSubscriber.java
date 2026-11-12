@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.project.realtime._messaging_application.modules.Conversation.dto.UserInboxEvent;
 import com.project.realtime._messaging_application.modules.Conversation.service.ConversationMemberCacheService;
 import com.project.realtime._messaging_application.modules.Message.dto.MessageResponse;
+import com.project.realtime._messaging_application.websocket.ChatWebSocketHandler.DeliveryReceipt;
 import com.project.realtime._messaging_application.websocket.ChatWebSocketHandler.ReadReceipt;
 import com.project.realtime._messaging_application.websocket.ChatWebSocketHandler.TypingEvent;
 import com.project.realtime._messaging_application.websocket.WebSocketEventListener.PresenceEvent;
@@ -109,11 +110,18 @@ public class RedisMessageSubscriber implements MessageListener {
                     log.trace("Forwarded TYPING conv={} user={}", convId, typingEvent.userId());
                 }
 
+                case DELIVERY_RECEIPT -> {
+                    DeliveryReceipt receipt = objectMapper.readValue(payload, DeliveryReceipt.class);
+                    messagingTemplate.convertAndSend(
+                            "/topic/conversation." + convId + ".delivered", receipt);
+                    log.trace("Forwarded DELIVERY_RECEIPT conv={} user={} seq={}", convId, receipt.userId(), receipt.seq());
+                }
+
                 case READ_RECEIPT -> {
                     ReadReceipt receipt = objectMapper.readValue(payload, ReadReceipt.class);
                     messagingTemplate.convertAndSend(
                             "/topic/conversation." + convId + ".read", receipt);
-                    log.trace("Forwarded READ_RECEIPT conv={} user={}", convId, receipt.userId());
+                    log.trace("Forwarded READ_RECEIPT conv={} user={} seq={}", convId, receipt.userId(), receipt.seq());
                 }
 
                 case PRESENCE -> {

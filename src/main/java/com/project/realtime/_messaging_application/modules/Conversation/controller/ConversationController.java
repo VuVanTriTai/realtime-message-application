@@ -37,11 +37,14 @@ public class ConversationController {
 
     private final ConversationService conversationService;
     private final MessageService messageService;
+    private final com.project.realtime._messaging_application.modules.Conversation.service.ReceiptService receiptService;
 
     public ConversationController(ConversationService conversationService,
-                                  MessageService messageService) {
+                                  MessageService messageService,
+                                  com.project.realtime._messaging_application.modules.Conversation.service.ReceiptService receiptService) {
         this.conversationService = conversationService;
         this.messageService = messageService;
+        this.receiptService = receiptService;
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -166,13 +169,42 @@ public class ConversationController {
      * PATCH /api/conversations/{id}/read?messageId=xxx
      * Đánh dấu đã đọc đến tin nhắn có id = messageId.
      */
+    /**
+     * PATCH /api/conversations/{id}/read?seq=...&messageId=...
+     * Ghi nhận con trỏ đã xem (read) vào Redis buffer.
+     */
     @PatchMapping("/{id}/read")
     public ResponseEntity<Void> markRead(
             @PathVariable Long id,
-            @RequestParam Long messageId,
+            @RequestParam(required = false) Long seq,
+            @RequestParam(required = false) Long messageId,
             @AuthenticationPrincipal User currentUser) {
-        conversationService.markRead(id, currentUser.getId(), messageId);
+        receiptService.recordRead(id, currentUser.getId(), seq, messageId);
         return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * PATCH /api/conversations/{id}/delivered?seq=...
+     * Ghi nhận con trỏ đã tới thiết bị (delivered) vào Redis buffer.
+     */
+    @PatchMapping("/{id}/delivered")
+    public ResponseEntity<Void> markDelivered(
+            @PathVariable Long id,
+            @RequestParam Long seq,
+            @AuthenticationPrincipal User currentUser) {
+        receiptService.recordDelivered(id, currentUser.getId(), seq);
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
+     * GET /api/conversations/{id}/receipts
+     * Lấy trạng thái deliveredSeq và readSeq của tất cả thành viên trong cuộc trò chuyện.
+     */
+    @GetMapping("/{id}/receipts")
+    public ResponseEntity<List<MemberReceiptResponse>> getReceipts(
+            @PathVariable Long id,
+            @AuthenticationPrincipal User currentUser) {
+        return ResponseEntity.ok(receiptService.getReceipts(id));
     }
 
     // ──────────────────────────────────────────────────────────────────────

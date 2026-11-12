@@ -15,3 +15,4 @@ public interface ConversationRepositoryCustom {
      */
     Long nextSeq(Long conversationId);
 }
+

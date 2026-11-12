@@ -79,6 +79,18 @@ public class ConversationMember {
     @Column(name = "last_read_message_id")
     private Long lastReadMessageId;
 
+    /**
+     * Sequence number cao nhất của tin nhắn đã tới thiết bị người này (2 tick xám).
+     */
+    @Column(name = "last_delivered_seq", nullable = false)
+    private Long lastDeliveredSeq = 0L;
+
+    /**
+     * Sequence number cao nhất của tin nhắn người này đã đọc/xem (2 tick xanh).
+     */
+    @Column(name = "last_read_seq", nullable = false)
+    private Long lastReadSeq = 0L;
+
     // ──────────────────────────────────────────────────────────────────────
     // JPA Lifecycle
     // ──────────────────────────────────────────────────────────────────────
@@ -121,6 +133,23 @@ public class ConversationMember {
         }
     }
 
+    /** Đánh dấu đã nhận (delivered) đến sequence number này (chỉ tăng) */
+    public void markDeliveredSeq(Long seq) {
+        if (seq != null && (this.lastDeliveredSeq == null || seq > this.lastDeliveredSeq)) {
+            this.lastDeliveredSeq = seq;
+        }
+    }
+
+    /** Đánh dấu đã đọc đến sequence number này (chỉ tăng, đồng thời delivered >= read) */
+    public void markReadSeq(Long seq) {
+        if (seq != null && (this.lastReadSeq == null || seq > this.lastReadSeq)) {
+            this.lastReadSeq = seq;
+            if (this.lastDeliveredSeq == null || seq > this.lastDeliveredSeq) {
+                this.lastDeliveredSeq = seq;
+            }
+        }
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // Constructors
     // ──────────────────────────────────────────────────────────────────────
@@ -149,5 +178,15 @@ public class ConversationMember {
     public Long getLastReadMessageId()              { return lastReadMessageId; }
     public void setLastReadMessageId(Long lastReadMessageId) {
         this.lastReadMessageId = lastReadMessageId;
+    }
+
+    public Long getLastDeliveredSeq()               { return lastDeliveredSeq; }
+    public void setLastDeliveredSeq(Long lastDeliveredSeq) {
+        this.lastDeliveredSeq = lastDeliveredSeq;
+    }
+
+    public Long getLastReadSeq()                    { return lastReadSeq; }
+    public void setLastReadSeq(Long lastReadSeq)    {
+        this.lastReadSeq = lastReadSeq;
     }
 }
