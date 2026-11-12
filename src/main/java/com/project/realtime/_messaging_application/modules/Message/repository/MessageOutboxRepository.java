@@ -32,13 +32,14 @@ public interface MessageOutboxRepository extends JpaRepository<MessageOutbox, Lo
     /**
      * SELECT FOR UPDATE SKIP LOCKED — an toan cho multi-instance deployment.
      *
-     * Chỉ bốc các tin PENDING đã tồn tại quá 3 giây (những tin mà Fast Path đã thất bại hoặc bị crash).
-     * Tránh đụng độ hoặc gửi trùng với Fast Path tức thì.
+     * Quy tắc phòng thủ: Ngưỡng bốc outbox (> 10s) gấp 5 lần chu kỳ flush batch (2s).
+     * Chỉ bốc các tin PENDING đã tồn tại quá 10 giây (những tin mà Fast Path hoặc Batch Flush thất bại/crash).
+     * Tránh hoàn toàn việc đụng độ hoặc gửi trùng với Fast Path tức thì.
      */
     @Query(value = """
             SELECT * FROM message_outbox
             WHERE status = 'PENDING'
-              AND created_at < NOW() - INTERVAL '3 seconds'
+              AND created_at < NOW() - INTERVAL '10 seconds'
             ORDER BY created_at ASC
             LIMIT :limit
             FOR UPDATE SKIP LOCKED
@@ -52,6 +53,16 @@ public interface MessageOutboxRepository extends JpaRepository<MessageOutbox, Lo
     @Transactional
     @Query("UPDATE MessageOutbox o SET o.status = 'DONE', o.processedAt = CURRENT_TIMESTAMP WHERE o.messageId = :messageId")
     int markDoneByMessageId(@Param("messageId") Long messageId);
+
+    /**
+     * Batch update theo messageId có điều kiện (WHERE status = 'PENDING').
+     * Idempotent: chỉ chuyển các bản ghi đang PENDING sang DONE.
+     * Số dòng bị ảnh hưởng chỉ dùng để log, vô hại nếu bản ghi đã được xử lý.
+     */
+    @Modifying
+    @Transactional
+    @Query("UPDATE MessageOutbox o SET o.status = 'DONE', o.processedAt = CURRENT_TIMESTAMP WHERE o.messageId IN :messageIds AND o.status = com.project.realtime._messaging_application.modules.Message.entity.MessageOutbox.Status.PENDING")
+    int markAllDoneByMessageIds(@Param("messageIds") java.util.Collection<Long> messageIds);
 
     /**
      * Batch update: Đánh dấu DONE hàng loạt trong 1 câu lệnh duy nhất (tối ưu IO).

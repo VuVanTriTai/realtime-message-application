@@ -51,6 +51,7 @@ public class OutboxPoller {
 
     private final MessageOutboxRepository outboxRepo;
     private final RedisMessagePublisher   redisPublisher;
+    private final org.springframework.data.redis.core.StringRedisTemplate stringRedisTemplate;
     private final Timer                   outboxDelayTimer;
     private final TransactionTemplate     transactionTemplate;
 
@@ -68,10 +69,12 @@ public class OutboxPoller {
 
     public OutboxPoller(MessageOutboxRepository outboxRepo,
                         RedisMessagePublisher redisPublisher,
+                        org.springframework.data.redis.core.StringRedisTemplate stringRedisTemplate,
                         Timer outboxDelayTimer,
                         TransactionTemplate transactionTemplate) {
         this.outboxRepo          = outboxRepo;
         this.redisPublisher      = redisPublisher;
+        this.stringRedisTemplate = stringRedisTemplate;
         this.outboxDelayTimer    = outboxDelayTimer;
         this.transactionTemplate = transactionTemplate;
     }
@@ -183,6 +186,20 @@ public class OutboxPoller {
             if (item.getCreatedAt() != null) {
                 long delayMs = Duration.between(item.getCreatedAt(), Instant.now()).toMillis();
                 outboxDelayTimer.record(delayMs, TimeUnit.MILLISECONDS);
+            }
+
+            // Phòng thủ lớp 1: Kiểm tra key "published:msg:{id}" ở Redis.
+            // Nếu Fast Path đã publish thành công rồi → bỏ qua, không publish lại, trả về true để mark DONE
+            if (item.getMessageId() != null) {
+                try {
+                    Boolean alreadyPublished = stringRedisTemplate.hasKey("published:msg:" + item.getMessageId());
+                    if (Boolean.TRUE.equals(alreadyPublished)) {
+                        log.debug("[OutboxPoller] Message {} already published via fast-path, skip duplicate publish", item.getMessageId());
+                        return true;
+                    }
+                } catch (Exception redisEx) {
+                    log.warn("[OutboxPoller] Redis check published marker failed for msgId={}: {}", item.getMessageId(), redisEx.getMessage());
+                }
             }
 
             // Publish payload JSON len Redis

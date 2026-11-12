@@ -13,9 +13,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
@@ -56,6 +58,7 @@ public class RedisMessageSubscriber implements MessageListener {
     private final ObjectMapper                    objectMapper;
     private final Timer                           fanoutDurationTimer;
     private final ConversationMemberCacheService  memberCache;
+    private final StringRedisTemplate             stringRedisTemplate;
     // ── Stage Timers ──
     private final Timer                           stageRedisTransitTimer;
     private final Timer                           stageConsumerToSocketTimer;
@@ -64,13 +67,15 @@ public class RedisMessageSubscriber implements MessageListener {
                                   ObjectMapper objectMapper,
                                   Timer fanoutDurationTimer,
                                   ConversationMemberCacheService memberCache,
+                                  StringRedisTemplate stringRedisTemplate,
                                   Timer stageRedisTransitTimer,
                                   Timer stageConsumerToSocketTimer) {
-        this.messagingTemplate        = messagingTemplate;
-        this.objectMapper             = objectMapper;
-        this.fanoutDurationTimer      = fanoutDurationTimer;
-        this.memberCache              = memberCache;
-        this.stageRedisTransitTimer   = stageRedisTransitTimer;
+        this.messagingTemplate          = messagingTemplate;
+        this.objectMapper               = objectMapper;
+        this.fanoutDurationTimer        = fanoutDurationTimer;
+        this.memberCache                = memberCache;
+        this.stringRedisTemplate        = stringRedisTemplate;
+        this.stageRedisTransitTimer     = stageRedisTransitTimer;
         this.stageConsumerToSocketTimer = stageConsumerToSocketTimer;
     }
 
@@ -93,6 +98,22 @@ public class RedisMessageSubscriber implements MessageListener {
 
                 case NEW_MESSAGE -> {
                     MessageResponse msg = objectMapper.readValue(payload, MessageResponse.class);
+
+                    // ── Lớp phòng thủ cốt lõi: Consumer Idempotent theo messageId ──
+                    // SET dedupe:msg:{messageId} 1 NX EX 3600
+                    // Nếu key đã tồn tại (false) → message này đã được xử lý bởi subscriber, bỏ qua!
+                    if (msg.id() != null) {
+                        try {
+                            Boolean isFirst = stringRedisTemplate.opsForValue()
+                                    .setIfAbsent("dedupe:msg:" + msg.id(), "1", Duration.ofHours(1));
+                            if (Boolean.FALSE.equals(isFirst)) {
+                                log.debug("[Consumer-Dedupe] Duplicate message received for msgId={}, skipping fanout", msg.id());
+                                return;
+                            }
+                        } catch (Exception redisEx) {
+                            log.warn("[Consumer-Dedupe] Redis dedupe check failed for msgId={}: {}", msg.id(), redisEx.getMessage());
+                        }
+                    }
 
                     // ── Stage 3: Redis Pub/Sub transit latency ────────────────
                     // publishedAt được đặt trong RedisEnvelope ngay khi gọi convertAndSend() lên Redis.

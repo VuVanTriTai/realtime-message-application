@@ -62,9 +62,11 @@ public class AsyncConfig implements SchedulingConfigurer {
     @Bean(name = {"taskExecutor", "applicationTaskExecutor"})
     public Executor taskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(35);
-        executor.setMaxPoolSize(50);
-        executor.setQueueCapacity(500);
+        // Cân bằng với HikariCP pool (30): thread có việc là có connection chạy ngay,
+        // giảm queueCapacity xuống 100 để tránh hàng chờ vô ích làm đội tail latency.
+        executor.setCorePoolSize(25);
+        executor.setMaxPoolSize(30);
+        executor.setQueueCapacity(100);
         executor.setThreadNamePrefix("chat-worker-");
         executor.setRejectedExecutionHandler(
                 new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());

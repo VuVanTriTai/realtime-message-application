@@ -4,15 +4,16 @@ import com.project.realtime._messaging_application.common.ratelimit.WebSocketRat
 import com.project.realtime._messaging_application.modules.Message.dto.MessageResponse;
 import com.project.realtime._messaging_application.modules.Message.dto.SendMessageRequest;
 import com.project.realtime._messaging_application.modules.Message.service.MessageService;
+import com.project.realtime._messaging_application.modules.Message.service.OutboxBatchService;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.websocket.pubsub.RedisEventType;
 import com.project.realtime._messaging_application.websocket.pubsub.RedisMessagePublisher;
-import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.Timer;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
 import org.springframework.messaging.simp.SimpMessageHeaderAccessor;
@@ -21,9 +22,8 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.stereotype.Controller;
 
 import java.security.Principal;
+import java.time.Duration;
 import java.util.concurrent.Executor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -58,9 +58,11 @@ public class ChatWebSocketHandler {
     private final SimpMessagingTemplate       messagingTemplate;
     private final PresenceService             presenceService;
     private final RedisMessagePublisher       redisPublisher;
+    private final StringRedisTemplate         stringRedisTemplate;
     private final WebSocketRateLimiterService wsRateLimiter;
     private final Executor                    taskExecutor;
     private final com.project.realtime._messaging_application.modules.Conversation.service.ReceiptService receiptService;
+    private final OutboxBatchService          outboxBatchService;
     // ── Stage Timers ──
     private final Timer stageInboundToDbTimer;
     private final Timer stageDbToRedisTimer;
@@ -69,18 +71,22 @@ public class ChatWebSocketHandler {
                                 SimpMessagingTemplate messagingTemplate,
                                 PresenceService presenceService,
                                 RedisMessagePublisher redisPublisher,
+                                StringRedisTemplate stringRedisTemplate,
                                 WebSocketRateLimiterService wsRateLimiter,
                                 @Qualifier("taskExecutor") Executor taskExecutor,
                                 com.project.realtime._messaging_application.modules.Conversation.service.ReceiptService receiptService,
+                                OutboxBatchService outboxBatchService,
                                 Timer stageInboundToDbTimer,
                                 Timer stageDbToRedisTimer) {
         this.messageService        = messageService;
         this.messagingTemplate     = messagingTemplate;
         this.presenceService       = presenceService;
         this.redisPublisher        = redisPublisher;
+        this.stringRedisTemplate   = stringRedisTemplate;
         this.wsRateLimiter         = wsRateLimiter;
         this.taskExecutor          = taskExecutor;
         this.receiptService        = receiptService;
+        this.outboxBatchService    = outboxBatchService;
         this.stageInboundToDbTimer = stageInboundToDbTimer;
         this.stageDbToRedisTimer   = stageDbToRedisTimer;
     }
@@ -163,10 +169,21 @@ public class ChatWebSocketHandler {
                 final long s2Start = System.nanoTime();
                 try {
                     redisPublisher.publish(saved.conversationId(), RedisEventType.NEW_MESSAGE, saved);
-                    messageService.markOutboxDone(saved.id());
+
+                    // Phòng thủ lớp 1: Đánh dấu “đã publish” ở Redis (SET published:msg:{id} 1 EX 60, rất rẻ, không chiếm Hikari)
+                    try {
+                        stringRedisTemplate.opsForValue().set("published:msg:" + saved.id(), "1", Duration.ofSeconds(60));
+                    } catch (Exception reEx) {
+                        log.warn("Failed to set published marker in Redis for msgId={}: {}", saved.id(), reEx.getMessage());
+                    }
+
+                    // Ghi nhận Stage 2 thuần túy: DB commit xong -> Redis publish xong (KHÔNG bị đội bởi DB write)
                     stageDbToRedisTimer.record(System.nanoTime() - s2Start, TimeUnit.NANOSECONDS);
+
+                    // Gom nhóm cập nhật outbox DONE theo lô (batch flush định kỳ, ZERO DB connection tại đây!)
+                    outboxBatchService.enqueueDone(saved.id());
                 } catch (Exception pubEx) {
-                    // Ghi nhận stage 2 kể cả khi fail (OutboxPoller sẽ rescue)
+                    // Ghi nhận stage 2 kể cả khi fail (OutboxPoller sau 10s sẽ rescue)
                     stageDbToRedisTimer.record(System.nanoTime() - s2Start, TimeUnit.NANOSECONDS);
                     log.warn("[FastPath] Publish failed for msgId={}, OutboxPoller will rescue: {}",
                             saved.id(), pubEx.getMessage());
