@@ -30,6 +30,11 @@ public class RedisEnvelope {
      */
     private String payload;
 
+    /**
+     * Thời điểm publish lên Redis (epoch millis) để đo độ trễ chặng Redis (transit latency).
+     */
+    private Long publishedAt;
+
     // ──────────────────────────────────────────────────────────────────────
     // Constructors
     // ──────────────────────────────────────────────────────────────────────
@@ -37,9 +42,14 @@ public class RedisEnvelope {
     public RedisEnvelope() {}
 
     public RedisEnvelope(RedisEventType eventType, Long conversationId, String payload) {
+        this(eventType, conversationId, payload, System.currentTimeMillis());
+    }
+
+    public RedisEnvelope(RedisEventType eventType, Long conversationId, String payload, Long publishedAt) {
         this.eventType      = eventType;
         this.conversationId = conversationId;
         this.payload        = payload;
+        this.publishedAt    = publishedAt != null ? publishedAt : System.currentTimeMillis();
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -54,4 +64,7 @@ public class RedisEnvelope {
 
     public String getPayload()                               { return payload; }
     public void setPayload(String payload)                   { this.payload = payload; }
+
+    public Long getPublishedAt()                             { return publishedAt; }
+    public void setPublishedAt(Long publishedAt)             { this.publishedAt = publishedAt; }
 }

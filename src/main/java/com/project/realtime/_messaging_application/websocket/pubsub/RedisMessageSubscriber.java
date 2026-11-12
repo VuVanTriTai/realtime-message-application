@@ -56,15 +56,22 @@ public class RedisMessageSubscriber implements MessageListener {
     private final ObjectMapper                    objectMapper;
     private final Timer                           fanoutDurationTimer;
     private final ConversationMemberCacheService  memberCache;
+    // ── Stage Timers ──
+    private final Timer                           stageRedisTransitTimer;
+    private final Timer                           stageConsumerToSocketTimer;
 
     public RedisMessageSubscriber(SimpMessagingTemplate messagingTemplate,
                                   ObjectMapper objectMapper,
                                   Timer fanoutDurationTimer,
-                                  ConversationMemberCacheService memberCache) {
-        this.messagingTemplate   = messagingTemplate;
-        this.objectMapper        = objectMapper;
-        this.fanoutDurationTimer = fanoutDurationTimer;
-        this.memberCache         = memberCache;
+                                  ConversationMemberCacheService memberCache,
+                                  Timer stageRedisTransitTimer,
+                                  Timer stageConsumerToSocketTimer) {
+        this.messagingTemplate        = messagingTemplate;
+        this.objectMapper             = objectMapper;
+        this.fanoutDurationTimer      = fanoutDurationTimer;
+        this.memberCache              = memberCache;
+        this.stageRedisTransitTimer   = stageRedisTransitTimer;
+        this.stageConsumerToSocketTimer = stageConsumerToSocketTimer;
     }
 
     /**
@@ -86,6 +93,19 @@ public class RedisMessageSubscriber implements MessageListener {
 
                 case NEW_MESSAGE -> {
                     MessageResponse msg = objectMapper.readValue(payload, MessageResponse.class);
+
+                    // ── Stage 3: Redis Pub/Sub transit latency ────────────────
+                    // publishedAt được đặt trong RedisEnvelope ngay khi gọi convertAndSend() lên Redis.
+                    // Hiệu số này = thời gian Redis mang message từ publisher → subscriber.
+                    if (envelope.getPublishedAt() != null && envelope.getPublishedAt() > 0) {
+                        long transitMs = System.currentTimeMillis() - envelope.getPublishedAt();
+                        // Chỉ ghi nếu giá trị hợp lý (< 30 giây) để loại bỏ clock skew cực đoan
+                        if (transitMs >= 0 && transitMs < 30_000) {
+                            stageRedisTransitTimer.record(transitMs, TimeUnit.MILLISECONDS);
+                        }
+                    }
+
+                    // ── Stage 4: Consumer → ghi xuống tất cả socket (fanout) ─
                     long startFanout = System.nanoTime();
 
                     // 1. [Active Chat Room Topic]
@@ -99,7 +119,9 @@ public class RedisMessageSubscriber implements MessageListener {
                     // mà KHÔNG CẦN client phải subscribe hàng trăm phòng chat!
                     fanoutToUserChannels(convId, msg);
 
-                    fanoutDurationTimer.record(System.nanoTime() - startFanout, TimeUnit.NANOSECONDS);
+                    long fanoutNs = System.nanoTime() - startFanout;
+                    fanoutDurationTimer.record(fanoutNs, TimeUnit.NANOSECONDS);
+                    stageConsumerToSocketTimer.record(fanoutNs, TimeUnit.NANOSECONDS);
                     log.debug("Forwarded NEW_MESSAGE conv={} msg={}", convId, msg.id());
                 }
 

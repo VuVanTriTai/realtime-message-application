@@ -7,6 +7,8 @@ import com.project.realtime._messaging_application.modules.Message.service.Messa
 import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.websocket.pubsub.RedisEventType;
 import com.project.realtime._messaging_application.websocket.pubsub.RedisMessagePublisher;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.Timer;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +22,9 @@ import org.springframework.stereotype.Controller;
 
 import java.security.Principal;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeUnit;
 
 /**
  * WebSocket/STOMP handler cho tin nhan chat.
@@ -56,6 +61,9 @@ public class ChatWebSocketHandler {
     private final WebSocketRateLimiterService wsRateLimiter;
     private final Executor                    taskExecutor;
     private final com.project.realtime._messaging_application.modules.Conversation.service.ReceiptService receiptService;
+    // ── Stage Timers ──
+    private final Timer stageInboundToDbTimer;
+    private final Timer stageDbToRedisTimer;
 
     public ChatWebSocketHandler(MessageService messageService,
                                 SimpMessagingTemplate messagingTemplate,
@@ -63,14 +71,18 @@ public class ChatWebSocketHandler {
                                 RedisMessagePublisher redisPublisher,
                                 WebSocketRateLimiterService wsRateLimiter,
                                 @Qualifier("taskExecutor") Executor taskExecutor,
-                                com.project.realtime._messaging_application.modules.Conversation.service.ReceiptService receiptService) {
-        this.messageService    = messageService;
-        this.messagingTemplate = messagingTemplate;
-        this.presenceService   = presenceService;
-        this.redisPublisher    = redisPublisher;
-        this.wsRateLimiter     = wsRateLimiter;
-        this.taskExecutor      = taskExecutor;
-        this.receiptService    = receiptService;
+                                com.project.realtime._messaging_application.modules.Conversation.service.ReceiptService receiptService,
+                                Timer stageInboundToDbTimer,
+                                Timer stageDbToRedisTimer) {
+        this.messageService        = messageService;
+        this.messagingTemplate     = messagingTemplate;
+        this.presenceService       = presenceService;
+        this.redisPublisher        = redisPublisher;
+        this.wsRateLimiter         = wsRateLimiter;
+        this.taskExecutor          = taskExecutor;
+        this.receiptService        = receiptService;
+        this.stageInboundToDbTimer = stageInboundToDbTimer;
+        this.stageDbToRedisTimer   = stageDbToRedisTimer;
     }
 
     // ================================================================
@@ -140,20 +152,31 @@ public class ChatWebSocketHandler {
         // --- Submit viec nang sang chat-worker-* (khong block STOMP thread) ---
         taskExecutor.execute(() -> {
             try {
-                // 1. Luu Message + MessageOutbox (PENDING) trong 1 transaction DB
+                // ── Stage 1: Nhận frame → commit DB ──────────────────────────
+                // Bắt đầu ngay trước khi INSERT message + INSERT outbox
+                final long s1Start = System.nanoTime();
                 MessageResponse saved = messageService.sendMessage(userId, req);
+                stageInboundToDbTimer.record(System.nanoTime() - s1Start, TimeUnit.NANOSECONDS);
 
-                // 2. [Fast Path] Publish truc tiep sang Redis Pub/Sub (< 1ms, E2E ~15ms)
+                // ── Stage 2: Commit DB → publish Redis ───────────────────────
+                // [Fast Path] Publish truc tiep sang Redis Pub/Sub (< 1ms, E2E ~15ms)
+                final long s2Start = System.nanoTime();
                 try {
                     redisPublisher.publish(saved.conversationId(), RedisEventType.NEW_MESSAGE, saved);
                     messageService.markOutboxDone(saved.id());
+                    stageDbToRedisTimer.record(System.nanoTime() - s2Start, TimeUnit.NANOSECONDS);
                 } catch (Exception pubEx) {
+                    // Ghi nhận stage 2 kể cả khi fail (OutboxPoller sẽ rescue)
+                    stageDbToRedisTimer.record(System.nanoTime() - s2Start, TimeUnit.NANOSECONDS);
                     log.warn("[FastPath] Publish failed for msgId={}, OutboxPoller will rescue: {}",
                             saved.id(), pubEx.getMessage());
                 }
 
-                log.debug("[chat-worker] Message saved and fast-path dispatched: conversation={} sender={}",
-                        req.conversationId(), username);
+                log.debug("[chat-worker] Message saved and fast-path dispatched: conversation={} sender={} " +
+                                "stage1={}ms stage2={}ms",
+                        req.conversationId(), username,
+                        stageInboundToDbTimer.mean(TimeUnit.MILLISECONDS),
+                        stageDbToRedisTimer.mean(TimeUnit.MILLISECONDS));
 
             } catch (Exception e) {
                 // DB that bai → bao nguoi gui qua private queue

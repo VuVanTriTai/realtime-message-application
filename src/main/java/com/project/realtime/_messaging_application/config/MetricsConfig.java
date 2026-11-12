@@ -9,10 +9,17 @@ import org.springframework.context.annotation.Configuration;
  *
  * Metrics duoc expose qua /actuator/prometheus va scrape boi Prometheus.
  *
- * Danh sach metrics:
+ * ── 4 STAGE PIPELINE TIMERS (Server-side White-box) ──
+ *   chat.stage.inbound_to_db       — Stage 1: Nhan STOMP frame → commit DB (MessageService.sendMessage)
+ *   chat.stage.db_to_redis         — Stage 2: Commit DB → publish len Redis (ChatWebSocketHandler fast-path)
+ *   chat.stage.redis_transit       — Stage 3: Publish len Redis → subscriber nhan duoc (do boi publishedAt trong envelope)
+ *   chat.stage.consumer_to_socket  — Stage 4: Subscriber nhan → ghi xuong tat ca socket (fanout)
+ *
+ * ── GENERAL METRICS ──
  *   chat_messages_sent_total         — So tin da gui (counter)
  *   chat_messages_latency_seconds    — Do tre end-to-end (timer, tu payload timestamp)
- *   chat_fanout_duration_seconds     — Thoi gian fanout 1 tin den N member (timer)
+ *   chat_fanout_duration_seconds     — Thoi gian fanout 1 tin den N member (timer, alias Stage 4)
+ *   chat_outbox_delay_seconds        — Thoi gian tin nam cho trong outbox (Outbox Poller rescue path)
  *   chat_ws_sessions_active          — So WebSocket session dang mo (gauge)
  *   chat_ws_sessions_total           — Tong so lan ket noi (counter)
  *   chat_ws_disconnects_total        — Tong so lan ngat ket noi (counter)
@@ -73,6 +80,75 @@ public class MetricsConfig {
                 .description("Time message waited in outbox before being published to Redis")
                 .publishPercentiles(0.5, 0.95, 0.99)
                 .publishPercentileHistogram()
+                .register(registry);
+    }
+
+    // ================================================================
+    // 4-Stage Pipeline Timers (Server White-box Profiling)
+    // ================================================================
+
+    /**
+     * Stage 1: Nhận STOMP frame → commit DB.
+     * Đo tại ChatWebSocketHandler (chat-worker thread).
+     * Bắt đầu: ngay trước messageService.sendMessage().
+     * Kết thúc: ngay sau sendMessage() trả về.
+     * Cho thấy: chi phí INSERT message + INSERT outbox + seq update.
+     */
+    @Bean
+    public Timer stageInboundToDbTimer(MeterRegistry registry) {
+        return Timer.builder("chat.stage.inbound_to_db")
+                .description("Stage 1: STOMP frame received to DB commit completed")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .publishPercentileHistogram()
+                .tag("stage", "1")
+                .register(registry);
+    }
+
+    /**
+     * Stage 2: Commit DB → publish lên Redis.
+     * Đo tại ChatWebSocketHandler (fast-path sau khi sendMessage()).
+     * Bắt đầu: sau sendMessage() xong.
+     * Kết thúc: sau redisPublisher.publish() trả về.
+     * Cho thấy: chi phí serialize JSON + 1 Redis PUBLISH command.
+     */
+    @Bean
+    public Timer stageDbToRedisTimer(MeterRegistry registry) {
+        return Timer.builder("chat.stage.db_to_redis")
+                .description("Stage 2: DB commit to Redis PUBLISH command issued")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .publishPercentileHistogram()
+                .tag("stage", "2")
+                .register(registry);
+    }
+
+    /**
+     * Stage 3: Redis Pub/Sub transit latency.
+     * Đo tại RedisMessageSubscriber: System.currentTimeMillis() - envelope.publishedAt.
+     * Cho thấy: độ trễ của Redis Pub/Sub (mạng local ~ 0.1-1ms, cluster ~ 1-5ms).
+     */
+    @Bean
+    public Timer stageRedisTransitTimer(MeterRegistry registry) {
+        return Timer.builder("chat.stage.redis_transit")
+                .description("Stage 3: Redis PUBLISH to subscriber onMessage() callback")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .publishPercentileHistogram()
+                .tag("stage", "3")
+                .register(registry);
+    }
+
+    /**
+     * Stage 4: Consumer listener → ghi xuống tất cả socket (fanout).
+     * Alias của fanoutDurationTimer — đo toàn bộ convertAndSend() đến N members.
+     * Cho thấy: bottleneck outbound nếu nhóm quá lớn hoặc STOMP outbound channel bão hòa.
+     * (Thực chất cùng metric với chat.fanout.duration — stage tag phân biệt mục đích)
+     */
+    @Bean
+    public Timer stageConsumerToSocketTimer(MeterRegistry registry) {
+        return Timer.builder("chat.stage.consumer_to_socket")
+                .description("Stage 4: Subscriber received to all WebSocket convertAndSend() done")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .publishPercentileHistogram()
+                .tag("stage", "4")
                 .register(registry);
     }
 
