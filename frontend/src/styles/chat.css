@@ -560,8 +560,8 @@
 }
 
 .msg-status-icon { display: flex; align-items: center; }
-.icon-read { color: rgba(255,255,255,0.95); }
-.icon-delivered { color: rgba(255,255,255,0.75); }
+.icon-read { color: #38bdf8; filter: drop-shadow(0 0 2px rgba(56, 189, 248, 0.4)); }
+.icon-delivered { color: rgba(255,255,255,0.85); }
 .icon-sent { color: rgba(255,255,255,0.55); }
 .icon-pending { color: rgba(255,255,255,0.35); }
 

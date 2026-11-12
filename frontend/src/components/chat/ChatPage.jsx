@@ -20,7 +20,7 @@ export default function ChatPage({ activeConv, setActiveConv }) {
   const [jumpMessageId, setJumpMessageId] = useState(null);
   // { [convId]: string[] } — danh sách tên người đang typing trong mỗi conversation
   const [typingStates, setTypingStates] = useState({});
-  const { subscribeToConversation, subscribeToUserEvents } = useWebSocket();
+  const { subscribeToConversation, subscribeToUserEvents, sendDelivered } = useWebSocket();
   const { currentUser } = useAuth();
   const { showNotification } = useNotification();
 
@@ -152,6 +152,11 @@ export default function ChatPage({ activeConv, setActiveConv }) {
     const currentConv = conversationsRef.current.find((c) => c.id === msg.conversationId);
     const isFromOther = msg.sender?.id !== currentUser?.id;
     const isNotActiveConv = activeConvRef.current?.id !== msg.conversationId;
+
+    // Bắn ACK Delivered khi thiết bị nhận được tin nhắn từ người khác
+    if (isFromOther && msg.seq) {
+      sendDelivered(msg.conversationId, msg.seq);
+    }
 
     if (currentConv && isFromOther && (document.hidden || isNotActiveConv)) {
       showNotification(msg, currentConv, () => {

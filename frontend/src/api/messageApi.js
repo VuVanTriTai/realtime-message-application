@@ -10,6 +10,9 @@ export const messageApi = {
   syncMissed: (conversationId, lastId) =>
     apiRequest(`/messages/sync?conversationId=${conversationId}&lastId=${lastId}`),
 
+  syncGapBySeq: (conversationId, afterSeq) =>
+    apiRequest(`/conversations/${conversationId}/messages?afterSeq=${afterSeq}`),
+
   sendMessage: (arg1, arg2, arg3 = 'TEXT', arg4 = null) => {
     const payload = typeof arg1 === 'object' && arg1 !== null
       ? {

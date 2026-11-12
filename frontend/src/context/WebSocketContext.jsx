@@ -197,6 +197,15 @@ export function WebSocketProvider({ children }) {
       }
     });
 
+    const subDelivered = client.subscribe(`/topic/conversation.${subConfig.convId}.delivered`, (msg) => {
+      try {
+        const payload = JSON.parse(msg.body);
+        subConfig.handlersRef.current.onDelivered?.(payload);
+      } catch (err) {
+        console.error('[WS] Error parsing delivered receipt', err);
+      }
+    });
+
     const subPresence = client.subscribe(`/topic/conversation.${subConfig.convId}.presence`, (msg) => {
       try {
         const payload = JSON.parse(msg.body);
@@ -206,7 +215,7 @@ export function WebSocketProvider({ children }) {
       }
     });
 
-    subConfig.subscriptions = [subMsg, subTyping, subRead, subPresence];
+    subConfig.subscriptions = [subMsg, subTyping, subRead, subDelivered, subPresence];
   };
 
   /**
@@ -245,10 +254,11 @@ export function WebSocketProvider({ children }) {
     subConfig.callerCount++;
 
     // Merge handlers vào handlersRef (handlers mới ghi đè handlers cũ nếu có)
-    if (handlers.onMessage)  subConfig.handlersRef.current.onMessage  = handlers.onMessage;
-    if (handlers.onTyping)   subConfig.handlersRef.current.onTyping   = handlers.onTyping;
-    if (handlers.onRead)     subConfig.handlersRef.current.onRead     = handlers.onRead;
-    if (handlers.onPresence) subConfig.handlersRef.current.onPresence = handlers.onPresence;
+    if (handlers.onMessage)   subConfig.handlersRef.current.onMessage   = handlers.onMessage;
+    if (handlers.onTyping)    subConfig.handlersRef.current.onTyping    = handlers.onTyping;
+    if (handlers.onRead)      subConfig.handlersRef.current.onRead      = handlers.onRead;
+    if (handlers.onDelivered) subConfig.handlersRef.current.onDelivered = handlers.onDelivered;
+    if (handlers.onPresence)  subConfig.handlersRef.current.onPresence  = handlers.onPresence;
 
     return () => {
       const current = activeSubsRef.current.get(convId);
@@ -258,13 +268,15 @@ export function WebSocketProvider({ children }) {
       console.log(`[WS] cleanup conv=${convId} callerCount now=${subConfig.callerCount}`);
 
       // Xóa các handlers do caller này đăng ký
-      if (handlers.onMessage  && subConfig.handlersRef.current.onMessage  === handlers.onMessage)
+      if (handlers.onMessage   && subConfig.handlersRef.current.onMessage   === handlers.onMessage)
         delete subConfig.handlersRef.current.onMessage;
-      if (handlers.onTyping   && subConfig.handlersRef.current.onTyping   === handlers.onTyping)
+      if (handlers.onTyping    && subConfig.handlersRef.current.onTyping    === handlers.onTyping)
         delete subConfig.handlersRef.current.onTyping;
-      if (handlers.onRead     && subConfig.handlersRef.current.onRead     === handlers.onRead)
+      if (handlers.onRead      && subConfig.handlersRef.current.onRead      === handlers.onRead)
         delete subConfig.handlersRef.current.onRead;
-      if (handlers.onPresence && subConfig.handlersRef.current.onPresence === handlers.onPresence)
+      if (handlers.onDelivered && subConfig.handlersRef.current.onDelivered === handlers.onDelivered)
+        delete subConfig.handlersRef.current.onDelivered;
+      if (handlers.onPresence  && subConfig.handlersRef.current.onPresence  === handlers.onPresence)
         delete subConfig.handlersRef.current.onPresence;
 
       // Dùng timeout nhỏ để tránh React StrictMode double-invoke destroy STOMP ngay lập tức
@@ -329,13 +341,24 @@ export function WebSocketProvider({ children }) {
   }, []);
 
   /**
-   * Send read receipt /app/chat.read
+   * Send delivered receipt /app/chat.delivered (Dual ACK Cursor)
    */
-  const sendRead = useCallback((conversationId, messageId) => {
-    if (!stompClientRef.current?.connected || !messageId) return;
+  const sendDelivered = useCallback((conversationId, deliveredSeq) => {
+    if (!stompClientRef.current?.connected || !deliveredSeq) return;
+    stompClientRef.current.publish({
+      destination: '/app/chat.delivered',
+      body: JSON.stringify({ conversationId, deliveredSeq }),
+    });
+  }, []);
+
+  /**
+   * Send read receipt /app/chat.read (hỗ trợ cả messageId và readSeq)
+   */
+  const sendRead = useCallback((conversationId, messageId = null, readSeq = null) => {
+    if (!stompClientRef.current?.connected || (!messageId && !readSeq)) return;
     stompClientRef.current.publish({
       destination: '/app/chat.read',
-      body: JSON.stringify({ conversationId, messageId }),
+      body: JSON.stringify({ conversationId, messageId, readSeq }),
     });
   }, []);
 
@@ -359,6 +382,7 @@ export function WebSocketProvider({ children }) {
         subscribeToUserEvents,
         sendMessage,
         sendTyping,
+        sendDelivered,
         sendRead,
       }}
     >

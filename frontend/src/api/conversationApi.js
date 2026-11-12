@@ -47,6 +47,20 @@ export const conversationApi = {
       method: 'PATCH',
     }),
 
+  markDelivered: (conversationId, seq) =>
+    apiRequest(`/conversations/${conversationId}/delivered?seq=${seq}`, {
+      method: 'PATCH',
+    }),
+
+  markReadSeq: (conversationId, seq, messageId = null) => {
+    let url = `/conversations/${conversationId}/read?seq=${seq}`;
+    if (messageId) url += `&messageId=${messageId}`;
+    return apiRequest(url, { method: 'PATCH' });
+  },
+
+  getReceipts: (conversationId) =>
+    apiRequest(`/conversations/${conversationId}/receipts`),
+
   // ── Group Invite Link ────────────────────────────────────────────────────
 
   /** Tạo hoặc lấy lại invite link (Admin/Owner). Returns { token, inviteUrl } */
