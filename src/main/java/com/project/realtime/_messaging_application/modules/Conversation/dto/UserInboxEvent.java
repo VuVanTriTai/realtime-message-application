@@ -51,6 +51,7 @@ public record UserInboxEvent(
 
             preview = new LastMessagePreview(
                     msg.id(),
+                    msg.seq(),
                     previewContent,
                     msg.type(),
                     msg.fileName(),

@@ -102,6 +102,13 @@ public class Conversation {
     private Instant lastMessageAt;
 
     /**
+     * Sequence number cao nhất đã cấp trong cuộc trò chuyện (tăng dần 1, 2, 3...).
+     * Phục vụ Client-Side Gap Detection & Sync.
+     */
+    @Column(name = "last_seq", nullable = false)
+    private Long lastSeq = 0L;
+
+    /**
      * Token mời tham gia nhóm (chỉ dùng cho GROUP).
      * Sinh bằng UUID, unique trên toàn bảng.
      * Null khi chưa được tạo hoặc đã bị thu hồi.
@@ -213,6 +220,9 @@ public class Conversation {
 
     public Instant getLastMessageAt()            { return lastMessageAt; }
     public void setLastMessageAt(Instant lastMessageAt) { this.lastMessageAt = lastMessageAt; }
+
+    public Long getLastSeq()                     { return lastSeq; }
+    public void setLastSeq(Long lastSeq)         { this.lastSeq = lastSeq; }
 
     public String getInviteToken()               { return inviteToken; }
     public void setInviteToken(String inviteToken) { this.inviteToken = inviteToken; }

@@ -23,6 +23,7 @@ import java.time.Instant;
 public record MessageResponse(
         Long                id,
         Long                conversationId,
+        Long                seq,             // Sequence liên tục trong conversation (1, 2, 3...)
         UserProfileResponse sender,         // null neu tin SYSTEM
         String              clientMessageId,
         String              content,         // null khi isDeleted = true
@@ -45,6 +46,7 @@ public record MessageResponse(
         return new MessageResponse(
                 m.getId(),
                 m.getConversation().getId(),
+                m.getSeq(),
                 m.getSender() != null
                         ? UserProfileResponse.fromEntityPublic(m.getSender())
                         : null,

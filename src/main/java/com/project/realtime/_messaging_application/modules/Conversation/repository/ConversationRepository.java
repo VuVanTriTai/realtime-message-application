@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Optional;
 
 @Repository
-public interface ConversationRepository extends JpaRepository<Conversation, Long> {
+public interface ConversationRepository extends JpaRepository<Conversation, Long>, ConversationRepositoryCustom {
 
     // ──────────────────────────────────────────────────────────────────────
     // DIRECT conversation

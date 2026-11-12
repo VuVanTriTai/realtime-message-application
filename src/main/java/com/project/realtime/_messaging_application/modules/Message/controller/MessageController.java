@@ -57,17 +57,23 @@ public class MessageController {
     }
 
     /**
-     * GET /api/messages/sync?conversationId=1&lastId=850
-     * Trả về tất cả tin có id > lastId.
-     * Client gọi sau khi reconnect để nhận lại tin bị bỏ lỡ.
+     * GET /api/messages/sync?conversationId=1&afterSeq=10
+     * hoặc fallback GET /api/messages/sync?conversationId=1&lastId=850
+     * Trả về tất cả tin có seq > afterSeq (hoặc id > lastId).
+     * Phục vụ Client Gap Detection & Sync khi reconnect hoặc phát hiện nhảy seq.
      */
     @GetMapping("/sync")
     public ResponseEntity<List<MessageResponse>> syncMissedMessages(
             @RequestParam Long conversationId,
-            @RequestParam Long lastId,
+            @RequestParam(required = false) Long afterSeq,
+            @RequestParam(required = false) Long lastId,
             @AuthenticationPrincipal User currentUser) {
+        if (afterSeq != null) {
+            return ResponseEntity.ok(
+                    messageService.getMissedMessagesBySeq(conversationId, currentUser.getId(), afterSeq));
+        }
         return ResponseEntity.ok(
-                messageService.getMissedMessages(conversationId, currentUser.getId(), lastId));
+                messageService.getMissedMessages(conversationId, currentUser.getId(), lastId != null ? lastId : 0L));
     }
 
     /**

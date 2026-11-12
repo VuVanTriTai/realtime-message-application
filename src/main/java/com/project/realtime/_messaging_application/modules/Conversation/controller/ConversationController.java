@@ -2,6 +2,8 @@ package com.project.realtime._messaging_application.modules.Conversation.control
 
 import com.project.realtime._messaging_application.modules.Conversation.dto.*;
 import com.project.realtime._messaging_application.modules.Conversation.service.ConversationService;
+import com.project.realtime._messaging_application.modules.Message.dto.MessageResponse;
+import com.project.realtime._messaging_application.modules.Message.service.MessageService;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -34,9 +36,12 @@ import java.util.List;
 public class ConversationController {
 
     private final ConversationService conversationService;
+    private final MessageService messageService;
 
-    public ConversationController(ConversationService conversationService) {
+    public ConversationController(ConversationService conversationService,
+                                  MessageService messageService) {
         this.conversationService = conversationService;
+        this.messageService = messageService;
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -49,6 +54,26 @@ public class ConversationController {
             @AuthenticationPrincipal User currentUser) {
         return ResponseEntity.ok(
                 conversationService.getMyConversations(currentUser.getId()));
+    }
+
+    /**
+     * GET /api/conversations/{id}/messages
+     * - afterSeq có giá trị: Gap Detection Sync (lấy các tin có seq > afterSeq)
+     * - cursor có giá trị: lấy 50 tin cũ hơn cursor (cuộn lên)
+     * - không param: lấy 50 tin mới nhất
+     */
+    @GetMapping("/{id}/messages")
+    public ResponseEntity<List<MessageResponse>> getConversationMessages(
+            @PathVariable Long id,
+            @RequestParam(required = false) Long afterSeq,
+            @RequestParam(required = false) Long cursor,
+            @AuthenticationPrincipal User currentUser) {
+        if (afterSeq != null) {
+            return ResponseEntity.ok(
+                    messageService.getMissedMessagesBySeq(id, currentUser.getId(), afterSeq));
+        }
+        return ResponseEntity.ok(
+                messageService.getHistory(id, currentUser.getId(), cursor));
     }
 
     // ──────────────────────────────────────────────────────────────────────

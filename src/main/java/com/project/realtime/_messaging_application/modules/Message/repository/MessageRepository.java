@@ -89,6 +89,23 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
             @Param("lastReceivedId")  Long lastReceivedId
     );
 
+    /**
+     * Gap Detection Sync: Lấy tất cả tin nhắn có seq > afterSeq trong conversation.
+     * Dùng index uq_messages_conv_seq (conversation_id, seq ASC).
+     * Giới hạn 200 tin mỗi lần đồng bộ.
+     */
+    @Query("""
+            SELECT m FROM Message m
+            WHERE m.conversation.id = :conversationId
+              AND m.seq > :afterSeq
+            ORDER BY m.seq ASC
+            LIMIT 200
+            """)
+    List<Message> findMissedMessagesBySeq(
+            @Param("conversationId")  Long conversationId,
+            @Param("afterSeq")        Long afterSeq
+    );
+
     // ──────────────────────────────────────────────────────────────────────
     // Unread count
     // ──────────────────────────────────────────────────────────────────────

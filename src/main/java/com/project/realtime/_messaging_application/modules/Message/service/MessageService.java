@@ -91,7 +91,7 @@ public class MessageService {
     }
 
     /**
-     * Đồng bộ tin bị bỏ lỡ sau khi mất kết nối.
+     * Đồng bộ tin bị bỏ lỡ sau khi mất kết nối (theo message ID).
      * Client gửi lastReceivedMessageId → server trả các tin có id lớn hơn.
      */
     public List<MessageResponse> getMissedMessages(Long conversationId,
@@ -99,6 +99,20 @@ public class MessageService {
             Long lastReceivedMessageId) {
         assertMember(conversationId, userId);
         return messageRepo.findMissedMessages(conversationId, lastReceivedMessageId)
+                .stream()
+                .map(MessageResponse::fromEntity)
+                .toList();
+    }
+
+    /**
+     * Đồng bộ tin nhắn theo seq cursor (Client Gap Detection Sync).
+     * Client phát hiện khoảng hở (seq > lastSeq + 1) hoặc reconnect → gọi để lấy các tin còn thiếu.
+     */
+    public List<MessageResponse> getMissedMessagesBySeq(Long conversationId,
+            Long userId,
+            Long afterSeq) {
+        assertMember(conversationId, userId);
+        return messageRepo.findMissedMessagesBySeq(conversationId, afterSeq)
                 .stream()
                 .map(MessageResponse::fromEntity)
                 .toList();
@@ -169,11 +183,15 @@ public class MessageService {
             if (req.thumbUrl()  != null) message.setThumbUrl(req.thumbUrl());
         }
 
-        // 5. Lưu message
+        // 5. Cấp phát sequence number liên tục (atomic row-lock trên conversation)
+        Long nextSeq = conversationRepo.nextSeq(conversation.getId());
+        message.setSeq(nextSeq);
+
+        // 6. Lưu message
         final long saveStart = System.nanoTime();
         messageRepo.save(message);
 
-        // 6. Cập nhật denormalized last_message trong cùng transaction
+        // 7. Cập nhật denormalized last_message trong cùng transaction
         conversationRepo.updateLastMessage(
                 conversation.getId(), message.getId(), message.getCreatedAt());
 

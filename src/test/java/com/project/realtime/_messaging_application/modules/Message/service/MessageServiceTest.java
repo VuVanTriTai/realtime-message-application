@@ -19,6 +19,7 @@ import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.modules.User.repository.UserRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Timer;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -244,6 +245,7 @@ class MessageServiceTest {
                     .thenReturn(Optional.empty());
             when(conversationRepo.findById(CONVERSATION_ID)).thenReturn(Optional.of(conversation));
             when(userRepo.findById(SENDER_ID)).thenReturn(Optional.of(senderUser));
+            when(conversationRepo.nextSeq(CONVERSATION_ID)).thenReturn(1L);
             when(messageRepo.save(any(Message.class))).thenAnswer(invocation -> {
                 Message m = invocation.getArgument(0);
                 m.setId(101L);
@@ -257,8 +259,10 @@ class MessageServiceTest {
             // Then:
             assertThat(response).isNotNull();
             assertThat(response.id()).isEqualTo(101L);
+            assertThat(response.seq()).isEqualTo(1L);
             assertThat(response.content()).isEqualTo(exactly4000);
 
+            verify(conversationRepo, times(1)).nextSeq(CONVERSATION_ID);
             verify(messageRepo, times(1)).save(any(Message.class));
             verify(conversationRepo, times(1)).updateLastMessage(eq(CONVERSATION_ID), eq(101L), any());
             verify(outboxRepo, times(1)).save(any(MessageOutbox.class));
@@ -276,6 +280,7 @@ class MessageServiceTest {
                     .thenReturn(Optional.empty());
             when(conversationRepo.findById(CONVERSATION_ID)).thenReturn(Optional.of(conversation));
             when(userRepo.findById(SENDER_ID)).thenReturn(Optional.of(senderUser));
+            when(conversationRepo.nextSeq(CONVERSATION_ID)).thenReturn(5L);
 
             when(messageRepo.save(any(Message.class))).thenAnswer(invocation -> {
                 Message m = invocation.getArgument(0);
@@ -290,6 +295,7 @@ class MessageServiceTest {
             // Then:
             assertThat(response).isNotNull();
             assertThat(response.id()).isEqualTo(200L);
+            assertThat(response.seq()).isEqualTo(5L);
             assertThat(response.content()).isEqualTo(validContent);
             assertThat(response.type()).isEqualTo("TEXT");
 
@@ -298,6 +304,7 @@ class MessageServiceTest {
             verify(messageRepo).save(messageCaptor.capture());
             Message savedMessage = messageCaptor.getValue();
             assertThat(savedMessage.getContent()).isEqualTo(validContent);
+            assertThat(savedMessage.getSeq()).isEqualTo(5L);
             assertThat(savedMessage.getType()).isEqualTo(MessageType.TEXT);
             assertThat(savedMessage.getClientMessageId()).isEqualTo("client-uuid-12345");
             assertThat(savedMessage.getSender()).isEqualTo(senderUser);
@@ -312,6 +319,29 @@ class MessageServiceTest {
             MessageOutbox savedOutbox = outboxCaptor.getValue();
             assertThat(savedOutbox.getMessageId()).isEqualTo(200L);
             assertThat(savedOutbox.getConversationId()).isEqualTo(CONVERSATION_ID);
+        }
+
+        @Test
+        @DisplayName("Gap Detection: getMissedMessagesBySeq trả về danh sách tin nhắn sau seq đã chỉ định")
+        void getMissedMessagesBySeq_shouldReturnMessagesAfterSeq() {
+            when(conversationRepo.isMember(CONVERSATION_ID, SENDER_ID)).thenReturn(true);
+
+            Message msg1 = Message.createText(conversation, senderUser, "Tin 1", "uuid-1");
+            msg1.setId(10L);
+            msg1.setSeq(6L);
+
+            Message msg2 = Message.createText(conversation, senderUser, "Tin 2", "uuid-2");
+            msg2.setId(11L);
+            msg2.setSeq(7L);
+
+            when(messageRepo.findMissedMessagesBySeq(CONVERSATION_ID, 5L)).thenReturn(List.of(msg1, msg2));
+
+            List<MessageResponse> result = messageService.getMissedMessagesBySeq(CONVERSATION_ID, SENDER_ID, 5L);
+
+            assertThat(result).hasSize(2);
+            assertThat(result.get(0).seq()).isEqualTo(6L);
+            assertThat(result.get(1).seq()).isEqualTo(7L);
+            verify(messageRepo).findMissedMessagesBySeq(CONVERSATION_ID, 5L);
         }
     }
 }

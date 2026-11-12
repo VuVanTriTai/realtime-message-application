@@ -41,6 +41,8 @@ import java.time.Instant;
         indexes = {
                 // Index chính: lấy lịch sử tin nhắn theo cursor pagination
                 @Index(name = "idx_messages_conv_id_desc", columnList = "conversation_id, id DESC"),
+                // Index Gap Detection & Sync theo sequence tăng dần
+                @Index(name = "idx_messages_conv_seq",     columnList = "conversation_id, seq"),
                 // Index phụ: tìm tin của một sender trong conversation
                 @Index(name = "idx_messages_sender_id",    columnList = "sender_id"),
                 // Index phụ: sắp xếp theo thời gian gửi
@@ -69,6 +71,13 @@ public class Message {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "conversation_id", nullable = false, updatable = false)
     private Conversation conversation;
+
+    /**
+     * Thứ tự liên tục của tin nhắn trong cuộc trò chuyện (1, 2, 3...).
+     * Phục vụ Client-Side Gap Detection & Sync.
+     */
+    @Column(name = "seq", nullable = false)
+    private Long seq = 0L;
 
     /**
      * Người gửi. Null chỉ với tin SYSTEM do server tự tạo.
@@ -249,6 +258,9 @@ public class Message {
 
     public Long getId()                            { return id; }
     public void setId(Long id)                     { this.id = id; }
+
+    public Long getSeq()                           { return seq; }
+    public void setSeq(Long seq)                   { this.seq = seq; }
 
     public Conversation getConversation()          { return conversation; }
     public void setConversation(Conversation c)    { this.conversation = c; }

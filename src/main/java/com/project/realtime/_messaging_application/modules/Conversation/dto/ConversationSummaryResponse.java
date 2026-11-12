@@ -27,7 +27,8 @@ public record ConversationSummaryResponse(
         String            avatarUrl,         // [ADDED] avatarUrl cua conversation (DIRECT la avatar cua otherUser)
         boolean           isOnline,          // trang thai online hien tai
         boolean           isStranger,        // (DIRECT only) true neu nguoi kia chua phai ban be
-        LastMessagePreview lastMessage        // [ADDED] preview tin nhan cuoi cho sidebar
+        LastMessagePreview lastMessage,      // [ADDED] preview tin nhan cuoi cho sidebar
+        Long              lastSeq            // [ADDED] sequence number cuoi cung cua conversation
 ) {
 
     /**
@@ -35,6 +36,7 @@ public record ConversationSummaryResponse(
      */
     public record LastMessagePreview(
             Long    id,
+            Long    seq,
             String  content,
             String  type,
             String  fileName,
@@ -71,6 +73,7 @@ public record ConversationSummaryResponse(
 
             return new LastMessagePreview(
                     m.getId(),
+                    m.getSeq(),
                     previewContent,
                     m.getType() != null ? m.getType().name() : "TEXT",
                     m.getFileName(),
@@ -105,7 +108,8 @@ public record ConversationSummaryResponse(
                 null,
                 false,
                 false,
-                LastMessagePreview.fromMessage(lastMsg)
+                LastMessagePreview.fromMessage(lastMsg),
+                conv.getLastSeq()
         );
     }
 
@@ -138,7 +142,8 @@ public record ConversationSummaryResponse(
                 otherUser.getAvatarUrl(),
                 isOnline,
                 isStranger,
-                LastMessagePreview.fromMessage(lastMsg)
+                LastMessagePreview.fromMessage(lastMsg),
+                conv.getLastSeq()
         );
     }
 }
