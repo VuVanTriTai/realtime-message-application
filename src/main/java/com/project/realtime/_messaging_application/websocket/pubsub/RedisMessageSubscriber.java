@@ -1,5 +1,6 @@
 package com.project.realtime._messaging_application.websocket.pubsub;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.project.realtime._messaging_application.modules.Conversation.dto.UserInboxEvent;
 import com.project.realtime._messaging_application.modules.Conversation.service.ConversationMemberCacheService;
@@ -13,7 +14,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.connection.Message;
 import org.springframework.data.redis.connection.MessageListener;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 
@@ -58,25 +58,37 @@ public class RedisMessageSubscriber implements MessageListener {
     private final ObjectMapper                    objectMapper;
     private final Timer                           fanoutDurationTimer;
     private final ConversationMemberCacheService  memberCache;
-    private final StringRedisTemplate             stringRedisTemplate;
     // ── Stage Timers ──
     private final Timer                           stageRedisTransitTimer;
     private final Timer                           stageConsumerToSocketTimer;
+    private final Timer                           stageSubscriberParseTimer;
+    private final Timer                           stageSubscriberDedupeTimer;
+
+    // ── In-Memory Deduplication Cache (Caffeine) ──
+    // Giữ 100.000 messageId gần nhất trong RAM, TTL 10 phút.
+    // Kiểm tra và chặn trùng lặp chỉ mất ~0.0001 ms, hoàn toàn Zero-Network I/O.
+    private final com.github.benmanes.caffeine.cache.Cache<Long, Boolean> localDedupeCache =
+            com.github.benmanes.caffeine.cache.Caffeine.newBuilder()
+                    .maximumSize(100_000)
+                    .expireAfterWrite(Duration.ofMinutes(10))
+                    .build();
 
     public RedisMessageSubscriber(SimpMessagingTemplate messagingTemplate,
                                   ObjectMapper objectMapper,
                                   Timer fanoutDurationTimer,
                                   ConversationMemberCacheService memberCache,
-                                  StringRedisTemplate stringRedisTemplate,
                                   Timer stageRedisTransitTimer,
-                                  Timer stageConsumerToSocketTimer) {
+                                  Timer stageConsumerToSocketTimer,
+                                  Timer stageSubscriberParseTimer,
+                                  Timer stageSubscriberDedupeTimer) {
         this.messagingTemplate          = messagingTemplate;
         this.objectMapper               = objectMapper;
         this.fanoutDurationTimer        = fanoutDurationTimer;
         this.memberCache                = memberCache;
-        this.stringRedisTemplate        = stringRedisTemplate;
         this.stageRedisTransitTimer     = stageRedisTransitTimer;
         this.stageConsumerToSocketTimer = stageConsumerToSocketTimer;
+        this.stageSubscriberParseTimer  = stageSubscriberParseTimer;
+        this.stageSubscriberDedupeTimer = stageSubscriberDedupeTimer;
     }
 
     /**
@@ -87,42 +99,42 @@ public class RedisMessageSubscriber implements MessageListener {
      */
     @Override
     public void onMessage(Message message, byte[] pattern) {
-        String json = new String(message.getBody());
+        // ── 1. ĐO ĐÚNG: Ghi nhận thời điểm nhận frame ngay dòng đầu tiên ──
+        final long onMessageEntryMillis = System.currentTimeMillis();
+        final long startParse = System.nanoTime();
 
         try {
-            RedisEnvelope envelope = objectMapper.readValue(json, RedisEnvelope.class);
+            // Parse 1 lần duy nhất từ byte[] (Single-pass parse trực tiếp từ buffer)
+            RedisEnvelope envelope = objectMapper.readValue(message.getBody(), RedisEnvelope.class);
             Long          convId   = envelope.getConversationId();
-            String        payload  = envelope.getPayload();
+            JsonNode      payload  = envelope.getPayload();
+
+            // ── Stage 3: Pure Redis Transit Latency ──
+            // Đo thuần túy từ lúc PUBLISH lên Redis đến lúc listener thread nhận và chạm onMessage
+            // (loại bỏ hoàn toàn chi phí parse, dedupe và network round-trip)
+            if (envelope.getPublishedAt() != null && envelope.getPublishedAt() > 0) {
+                long pureTransitMs = onMessageEntryMillis - envelope.getPublishedAt();
+                if (pureTransitMs >= 0 && pureTransitMs < 30_000) {
+                    stageRedisTransitTimer.record(pureTransitMs, TimeUnit.MILLISECONDS);
+                }
+            }
 
             switch (envelope.getEventType()) {
 
                 case NEW_MESSAGE -> {
-                    MessageResponse msg = objectMapper.readValue(payload, MessageResponse.class);
+                    // Chuyển JsonNode đã parse sẵn sang MessageResponse (không re-lex JSON String)
+                    MessageResponse msg = objectMapper.treeToValue(payload, MessageResponse.class);
+                    stageSubscriberParseTimer.record(System.nanoTime() - startParse, TimeUnit.NANOSECONDS);
 
-                    // ── Lớp phòng thủ cốt lõi: Consumer Idempotent theo messageId ──
-                    // SET dedupe:msg:{messageId} 1 NX EX 3600
-                    // Nếu key đã tồn tại (false) → message này đã được xử lý bởi subscriber, bỏ qua!
+                    // ── Lớp phòng thủ cốt lõi: In-memory Dedupe (0.001 ms, ZERO network call) ──
                     if (msg.id() != null) {
-                        try {
-                            Boolean isFirst = stringRedisTemplate.opsForValue()
-                                    .setIfAbsent("dedupe:msg:" + msg.id(), "1", Duration.ofHours(1));
-                            if (Boolean.FALSE.equals(isFirst)) {
-                                log.debug("[Consumer-Dedupe] Duplicate message received for msgId={}, skipping fanout", msg.id());
-                                return;
-                            }
-                        } catch (Exception redisEx) {
-                            log.warn("[Consumer-Dedupe] Redis dedupe check failed for msgId={}: {}", msg.id(), redisEx.getMessage());
-                        }
-                    }
+                        long startDedupe = System.nanoTime();
+                        Boolean isFirst = localDedupeCache.asMap().putIfAbsent(msg.id(), Boolean.TRUE) == null;
+                        stageSubscriberDedupeTimer.record(System.nanoTime() - startDedupe, TimeUnit.NANOSECONDS);
 
-                    // ── Stage 3: Redis Pub/Sub transit latency ────────────────
-                    // publishedAt được đặt trong RedisEnvelope ngay khi gọi convertAndSend() lên Redis.
-                    // Hiệu số này = thời gian Redis mang message từ publisher → subscriber.
-                    if (envelope.getPublishedAt() != null && envelope.getPublishedAt() > 0) {
-                        long transitMs = System.currentTimeMillis() - envelope.getPublishedAt();
-                        // Chỉ ghi nếu giá trị hợp lý (< 30 giây) để loại bỏ clock skew cực đoan
-                        if (transitMs >= 0 && transitMs < 30_000) {
-                            stageRedisTransitTimer.record(transitMs, TimeUnit.MILLISECONDS);
+                        if (!isFirst) {
+                            log.debug("[Consumer-Dedupe] Duplicate message msgId={}, dropped", msg.id());
+                            return;
                         }
                     }
 
@@ -130,14 +142,10 @@ public class RedisMessageSubscriber implements MessageListener {
                     long startFanout = System.nanoTime();
 
                     // 1. [Active Chat Room Topic]
-                    // Push tới những ai đang MỞ phòng chat này (/topic/conversation.{convId})
                     messagingTemplate.convertAndSend(
                             "/topic/conversation." + convId, msg);
 
                     // 2. [Single Inbox Channel / User Channel - Chuẩn Enterprise]
-                    // Push tới kênh cá nhân (/topic/user.{userId}) của TẤT CẢ thành viên
-                    // Giúp cập nhật sidebar realtime, số tin chưa đọc, preview tin nhắn mới
-                    // mà KHÔNG CẦN client phải subscribe hàng trăm phòng chat!
                     fanoutToUserChannels(convId, msg);
 
                     long fanoutNs = System.nanoTime() - startFanout;
@@ -147,28 +155,28 @@ public class RedisMessageSubscriber implements MessageListener {
                 }
 
                 case TYPING -> {
-                    TypingEvent typingEvent = objectMapper.readValue(payload, TypingEvent.class);
+                    TypingEvent typingEvent = objectMapper.treeToValue(payload, TypingEvent.class);
                     messagingTemplate.convertAndSend(
                             "/topic/conversation." + convId + ".typing", typingEvent);
                     log.trace("Forwarded TYPING conv={} user={}", convId, typingEvent.userId());
                 }
 
                 case DELIVERY_RECEIPT -> {
-                    DeliveryReceipt receipt = objectMapper.readValue(payload, DeliveryReceipt.class);
+                    DeliveryReceipt receipt = objectMapper.treeToValue(payload, DeliveryReceipt.class);
                     messagingTemplate.convertAndSend(
                             "/topic/conversation." + convId + ".delivered", receipt);
                     log.trace("Forwarded DELIVERY_RECEIPT conv={} user={} seq={}", convId, receipt.userId(), receipt.seq());
                 }
 
                 case READ_RECEIPT -> {
-                    ReadReceipt receipt = objectMapper.readValue(payload, ReadReceipt.class);
+                    ReadReceipt receipt = objectMapper.treeToValue(payload, ReadReceipt.class);
                     messagingTemplate.convertAndSend(
                             "/topic/conversation." + convId + ".read", receipt);
                     log.trace("Forwarded READ_RECEIPT conv={} user={} seq={}", convId, receipt.userId(), receipt.seq());
                 }
 
                 case PRESENCE -> {
-                    PresenceEvent presenceEvent = objectMapper.readValue(payload, PresenceEvent.class);
+                    PresenceEvent presenceEvent = objectMapper.treeToValue(payload, PresenceEvent.class);
                     messagingTemplate.convertAndSend(
                             "/topic/conversation." + convId + ".presence", presenceEvent);
                     log.debug("Forwarded PRESENCE conv={} user={} online={}",
@@ -178,14 +186,11 @@ public class RedisMessageSubscriber implements MessageListener {
                 case CONVERSATION_JOINED, CONVERSATION_LEFT -> {
                     // envelope.getConversationId() chứa target userId
                     messagingTemplate.convertAndSend(
-                            "/topic/user." + convId, payload);
+                            "/topic/user." + convId, payload != null ? payload.toString() : "");
                     log.debug("Forwarded {} to /topic/user.{}", envelope.getEventType(), convId);
                 }
 
                 case CACHE_EVICT_CONV_MEMBERS -> {
-                    // Distributed Cache Invalidation: xóa local Caffeine cache trên instance này.
-                    // Được trigger bởi publishCacheEvict() từ bất kỳ instance nào trong cluster
-                    // khi có thành viên Join/Leave/Kick khỏi conversation.
                     memberCache.evictLocal(convId);
                     log.debug("Cache invalidated for conv={} via Redis Pub/Sub", convId);
                 }
@@ -194,7 +199,7 @@ public class RedisMessageSubscriber implements MessageListener {
             }
 
         } catch (Exception e) {
-            log.error("Failed to process Redis message: {} | error: {}", json, e.getMessage(), e);
+            log.error("Failed to process Redis message error: {}", e.getMessage(), e);
         }
     }
 

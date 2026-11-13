@@ -69,44 +69,49 @@ public class RedisConfig {
     // ──────────────────────────────────────────────────────────────────────
 
     /**
-     * MessageListenerAdapter – wrap RedisMessageSubscriber để Redis có thể gọi.
-     * Delegate method mặc định là "onMessage" (match với interface MessageListener).
+     * Dedicated Executor cho RedisMessageListenerContainer.
+     * Tách hoàn toàn việc lắng nghe Redis Pub/Sub khỏi taskExecutor (vốn dùng cho DB write).
+     * Tránh việc hàng đợi nhận tin bị nghẽn sau các tác vụ ghi DB.
      */
-    @Bean
-    public MessageListenerAdapter messageListenerAdapter(RedisMessageSubscriber subscriber) {
-        return new MessageListenerAdapter(subscriber);
+    @Bean(name = "redisSubscriberExecutor")
+    public Executor redisSubscriberExecutor() {
+        org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor executor =
+                new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(16);
+        executor.setMaxPoolSize(32);
+        executor.setQueueCapacity(500);
+        executor.setThreadNamePrefix("redis-sub-");
+        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(10);
+        executor.initialize();
+        return executor;
     }
 
     /**
      * RedisMessageListenerContainer – container chứa và quản lý tất cả Redis subscriptions.
      *
      * Thiết kế:
+     *   - Dùng dedicated redisSubscriberExecutor riêng, không tranh chấp thread với taskExecutor (DB write).
+     *   - Đăng ký trực tiếp RedisMessageSubscriber (implements MessageListener), loại bỏ reflection overhead.
      *   - Subscribe pattern "chat:conv:*" → nhận TẤT CẢ channel chat của mọi conversation.
-     *   - Phù hợp cho giai đoạn phát triển và hệ thống vừa (~1000 conversation active).
-     *   - Khi cần tối ưu: dùng PubSubChannelManager để dynamic subscribe/unsubscribe
-     *     theo từng conversationId (chỉ subscribe khi có client trên instance này).
-     *
-     * Tại sao PatternTopic thay vì ChannelTopic?
-     *   - ChannelTopic match exact: "chat:conv:5" chỉ nhận conv 5.
-     *   - PatternTopic match wildcard: "chat:conv:*" nhận tất cả conv.
-     *   - Dùng pattern vì số conversation không cố định, không thể đăng ký trước.
      */
     @Bean
     public RedisMessageListenerContainer redisMessageListenerContainer(
             RedisConnectionFactory connectionFactory,
-            MessageListenerAdapter listenerAdapter,
-            @Qualifier("taskExecutor") Executor taskExecutor) {
+            RedisMessageSubscriber subscriber,
+            @Qualifier("redisSubscriberExecutor") Executor redisSubscriberExecutor) {
 
         RedisMessageListenerContainer container = new RedisMessageListenerContainer();
         container.setConnectionFactory(connectionFactory);
-        container.setTaskExecutor(taskExecutor);
+        container.setTaskExecutor(redisSubscriberExecutor);
 
-        // Subscribe pattern – nhận tất cả event của mọi conversation và user
-        container.addMessageListener(listenerAdapter, new PatternTopic(CHAT_CHANNEL_PATTERN));
+        // Đăng ký trực tiếp RedisMessageSubscriber (implements MessageListener), không qua MessageListenerAdapter reflection
+        container.addMessageListener(subscriber, new PatternTopic(CHAT_CHANNEL_PATTERN));
 
         // Subscribe pattern riêng cho distributed cache invalidation
         // "cache:evict:convMembers:{convId}" → RedisMessageSubscriber.onMessage() xử lý CACHE_EVICT_CONV_MEMBERS
-        container.addMessageListener(listenerAdapter, new PatternTopic(CACHE_EVICT_PATTERN));
+        container.addMessageListener(subscriber, new PatternTopic(CACHE_EVICT_PATTERN));
 
         return container;
     }

@@ -123,16 +123,40 @@ public class MetricsConfig {
 
     /**
      * Stage 3: Redis Pub/Sub transit latency.
-     * Đo tại RedisMessageSubscriber: System.currentTimeMillis() - envelope.publishedAt.
-     * Cho thấy: độ trễ của Redis Pub/Sub (mạng local ~ 0.1-1ms, cluster ~ 1-5ms).
+     * Đo tại RedisMessageSubscriber: onMessageEntryMillis - envelope.publishedAt.
+     * Cho thấy: độ trễ thuần của Redis Pub/Sub (publish -> onMessage entry).
      */
     @Bean
     public Timer stageRedisTransitTimer(MeterRegistry registry) {
         return Timer.builder("chat.stage.redis_transit")
-                .description("Stage 3: Redis PUBLISH to subscriber onMessage() callback")
+                .description("Stage 3: Redis PUBLISH to subscriber onMessage() callback entry")
                 .publishPercentiles(0.5, 0.95, 0.99)
                 .publishPercentileHistogram()
                 .tag("stage", "3")
+                .register(registry);
+    }
+
+    /**
+     * Sub-stage 3b: Parse JSON payload trên subscriber.
+     */
+    @Bean
+    public Timer stageSubscriberParseTimer(MeterRegistry registry) {
+        return Timer.builder("chat.stage.subscriber_parse")
+                .description("Time to parse incoming Redis envelope and payload")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .publishPercentileHistogram()
+                .register(registry);
+    }
+
+    /**
+     * Sub-stage 3c: Deduplication check trên subscriber.
+     */
+    @Bean
+    public Timer stageSubscriberDedupeTimer(MeterRegistry registry) {
+        return Timer.builder("chat.stage.subscriber_dedupe")
+                .description("Time to verify deduplication filter on subscriber")
+                .publishPercentiles(0.5, 0.95, 0.99)
+                .publishPercentileHistogram()
                 .register(registry);
     }
 

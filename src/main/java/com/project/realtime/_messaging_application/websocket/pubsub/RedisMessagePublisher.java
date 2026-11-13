@@ -1,6 +1,7 @@
 package com.project.realtime._messaging_application.websocket.pubsub;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,12 +42,17 @@ public class RedisMessagePublisher {
 
     /**
      * Publish mot object bat ky len channel cua conversation.
-     * Dung boi ChatWebSocketHandler cho TYPING, READ_RECEIPT, PRESENCE (van inline).
+     * Tối ưu: bọc payload dạng JsonNode lồng trực tiếp, serialize 1 lần duy nhất.
      */
     public void publish(Long conversationId, RedisEventType eventType, Object payload) {
         try {
-            String payloadJson = objectMapper.writeValueAsString(payload);
-            publishRaw(conversationId, eventType, payloadJson);
+            JsonNode payloadNode = objectMapper.valueToTree(payload);
+            RedisEnvelope envelope = new RedisEnvelope(eventType, conversationId, payloadNode);
+            String envelopeJson = objectMapper.writeValueAsString(envelope);
+            String channel = CHANNEL_PREFIX + conversationId;
+
+            redisTemplate.convertAndSend(channel, envelopeJson);
+            log.debug("Published {} to channel '{}'", eventType, channel);
         } catch (JsonProcessingException e) {
             log.error("Failed to serialize payload for channel chat:conv:{}: {}",
                     conversationId, e.getMessage());
@@ -58,13 +64,13 @@ public class RedisMessagePublisher {
      */
     public void publishToUser(Long userId, RedisEventType eventType, Object payload) {
         try {
-            String payloadJson = objectMapper.writeValueAsString(payload);
-            RedisEnvelope envelope = new RedisEnvelope(eventType, userId, payloadJson);
+            JsonNode payloadNode = objectMapper.valueToTree(payload);
+            RedisEnvelope envelope = new RedisEnvelope(eventType, userId, payloadNode);
             String envelopeJson = objectMapper.writeValueAsString(envelope);
             String channel = USER_CHANNEL_PREFIX + userId;
 
             redisTemplate.convertAndSend(channel, envelopeJson);
-            log.debug("Published {} to user channel '{}': {}", eventType, channel, payloadJson);
+            log.debug("Published {} to user channel '{}'", eventType, channel);
         } catch (JsonProcessingException e) {
             log.error("Failed to serialize payload for user {}: {}", userId, e.getMessage());
         } catch (Exception e) {
@@ -74,18 +80,18 @@ public class RedisMessagePublisher {
 
     /**
      * Publish voi payload JSON da duoc serialize san.
-     * Dung boi OutboxPoller: payload da duoc luu trong outbox, khong can serialize lai.
-     * Throw RuntimeException neu publish that bai de OutboxPoller co the xu ly retry.
+     * Dung boi OutboxPoller: payload da duoc luu trong outbox.
      */
     public void publishRaw(Long conversationId, RedisEventType eventType, String payloadJson) {
         try {
-            RedisEnvelope envelope     = new RedisEnvelope(eventType, conversationId, payloadJson);
+            JsonNode payloadNode = objectMapper.readTree(payloadJson);
+            RedisEnvelope envelope     = new RedisEnvelope(eventType, conversationId, payloadNode);
             String        envelopeJson = objectMapper.writeValueAsString(envelope);
             String        channel      = CHANNEL_PREFIX + conversationId;
 
             redisTemplate.convertAndSend(channel, envelopeJson);
 
-            log.debug("Published {} to channel '{}': {}", eventType, channel, payloadJson);
+            log.debug("Published {} to channel '{}'", eventType, channel);
         } catch (JsonProcessingException e) {
             log.error("Failed to wrap envelope for chat:conv:{}: {}", conversationId, e.getMessage());
             throw new RuntimeException("Redis publishRaw failed", e);
@@ -106,7 +112,7 @@ public class RedisMessagePublisher {
     public void publishCacheEvict(Long conversationId) {
         try {
             RedisEnvelope envelope     = new RedisEnvelope(
-                    RedisEventType.CACHE_EVICT_CONV_MEMBERS, conversationId, "{}");
+                    RedisEventType.CACHE_EVICT_CONV_MEMBERS, conversationId, objectMapper.createObjectNode());
             String        envelopeJson = objectMapper.writeValueAsString(envelope);
             String        channel      = CACHE_EVICT_CHANNEL_PREFIX + conversationId;
 
