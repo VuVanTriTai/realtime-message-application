@@ -77,9 +77,11 @@ public class RedisConfig {
     public Executor redisSubscriberExecutor() {
         org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor executor =
                 new org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(16);
-        executor.setMaxPoolSize(32);
-        executor.setQueueCapacity(500);
+        // Tối ưu cho CPU 4-core / 8-threads: công việc trong onMessage là Non-blocking In-Memory (< 1ms).
+        // Giữ thread pool nhỏ gọn (4-8) để tránh context switching, tăng queue lên 1000 để đệm micro-burst.
+        executor.setCorePoolSize(4);
+        executor.setMaxPoolSize(8);
+        executor.setQueueCapacity(1000);
         executor.setThreadNamePrefix("redis-sub-");
         executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);
