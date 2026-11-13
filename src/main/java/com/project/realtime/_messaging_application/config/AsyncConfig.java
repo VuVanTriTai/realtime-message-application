@@ -62,11 +62,12 @@ public class AsyncConfig implements SchedulingConfigurer {
     @Bean(name = {"taskExecutor", "applicationTaskExecutor"})
     public Executor taskExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        // Cân bằng với HikariCP pool (16): thread có việc là có connection chạy ngay.
-        // Giữ gọn (core 8, max 12) phù hợp CPU 4-core / 8-threads, tránh context switching.
-        executor.setCorePoolSize(8);
-        executor.setMaxPoolSize(12);
-        executor.setQueueCapacity(200);
+        // Sweet spot cho CPU 4-core, chạy đơn instance với WSL2 + k6 cùng máy.
+        // core=10 (< HikariCP 22, không bao giờ tranh thiếu connection),
+        // max=20 để hấp thu burst, queue=300 đủ dài tránh CallerRunsPolicy nghẽn STOMP thread.
+        executor.setCorePoolSize(10);
+        executor.setMaxPoolSize(20);
+        executor.setQueueCapacity(300);
         executor.setThreadNamePrefix("chat-worker-");
         executor.setRejectedExecutionHandler(
                 new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
