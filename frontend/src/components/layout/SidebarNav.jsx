@@ -7,6 +7,7 @@ import {
   Sun,
   Moon,
   Zap,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useWebSocket } from '../../context/WebSocketContext';
@@ -63,6 +64,20 @@ export default function SidebarNav({
             )}
           </div>
         </button>
+
+        {currentUser?.role === 'ADMIN' && (
+          <button
+            type="button"
+            id="nav-admin"
+            className={`nav-btn ${activeTab === 'admin' ? 'active' : ''}`}
+            onClick={() => setActiveTab('admin')}
+            title="Bảng Quản Trị Hệ Thống (Admin Portal)"
+          >
+            <div className="nav-btn-icon-wrapper">
+              <ShieldCheck size={22} color="#f59e0b" />
+            </div>
+          </button>
+        )}
       </nav>
 
       {/* Footer */}

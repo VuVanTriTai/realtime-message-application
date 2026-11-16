@@ -1,6 +1,10 @@
 package com.project.realtime._messaging_application.modules.User.repository;
 
+import com.project.realtime._messaging_application.modules.User.Entity.Role;
+import com.project.realtime._messaging_application.modules.User.Entity.Status;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -90,4 +94,28 @@ public interface UserRepository extends JpaRepository<User, Long> {
      */
     @Query("SELECT u FROM User u WHERE u.id IN :ids AND u.deletedAt IS NULL")
     List<User> findAllByIdInAndNotDeleted(@Param("ids") List<Long> ids);
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Admin management queries
+    // ──────────────────────────────────────────────────────────────────────
+
+    long countByStatus(Status status);
+
+    long countByRole(Role role);
+
+    @Query("""
+            SELECT u FROM User u
+            WHERE (:search IS NULL OR :search = ''
+                   OR LOWER(u.username) LIKE LOWER(CONCAT('%', :search, '%'))
+                   OR LOWER(u.displayName) LIKE LOWER(CONCAT('%', :search, '%'))
+                   OR LOWER(u.email) LIKE LOWER(CONCAT('%', :search, '%')))
+              AND (:status IS NULL OR u.status = :status)
+              AND (:role IS NULL OR u.role = :role)
+            """)
+    Page<User> searchUsersForAdmin(
+            @Param("search") String search,
+            @Param("status") Status status,
+            @Param("role")   Role role,
+            Pageable pageable
+    );
 }

@@ -15,7 +15,7 @@ export default function ConversationItem({ conversation, isActive, onSelect, isT
   if (isTyping) {
     subtitle = 'Đang soạn tin nhắn...';
   } else if (lastMsg) {
-    if (lastMsg.deleted) {
+    if (lastMsg.deleted || lastMsg.isDeleted || lastMsg.content === 'Tin nhắn đã thu hồi' || lastMsg.content === 'Tin nhắn đã được thu hồi') {
       subtitle = 'Tin nhắn đã thu hồi';
     } else {
       const senderPrefix = lastMsg.senderName ? `${lastMsg.senderName}: ` : '';

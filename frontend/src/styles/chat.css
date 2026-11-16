@@ -2573,3 +2573,51 @@
 }
 
 
+
+/* ═══════════════════════════════════════════════════════════
+   READ RECEIPT AVATARS — hiển thị ai đã đọc tin nhắn
+   Chỉ dùng cho nhóm ≤ 50 người và direct 1-1
+═══════════════════════════════════════════════════════════ */
+.read-avatars-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0;
+  margin-top: 2px;
+  margin-right: 4px;
+  padding-right: 2px;
+  min-height: 18px;
+}
+
+/* Mỗi avatar nhỏ 16x16 — dùng class read-avatar-xs để override avatar-xs */
+.read-avatars-row .read-avatar-xs {
+  width: 16px;
+  height: 16px;
+  font-size: 7px;
+  border: 1.5px solid var(--bg-chat, #1e293b);
+  border-radius: 50%;
+  margin-left: -4px;
+  cursor: default;
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.read-avatars-row .read-avatar-xs:first-child {
+  margin-left: 0;
+}
+
+.read-avatars-row .read-avatar-xs:hover {
+  transform: scale(1.2);
+  z-index: 10;
+  position: relative;
+}
+
+/* Badge "+N" khi có hơn 5 người đã đọc */
+.read-avatars-overflow {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  margin-left: 2px;
+  white-space: nowrap;
+  cursor: default;
+}

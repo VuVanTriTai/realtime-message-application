@@ -179,7 +179,7 @@ public class ConversationController {
             @RequestParam(required = false) Long seq,
             @RequestParam(required = false) Long messageId,
             @AuthenticationPrincipal User currentUser) {
-        receiptService.recordRead(id, currentUser.getId(), seq, messageId);
+        receiptService.recordRead(id, currentUser, seq, messageId);
         return ResponseEntity.noContent().build();
     }
 

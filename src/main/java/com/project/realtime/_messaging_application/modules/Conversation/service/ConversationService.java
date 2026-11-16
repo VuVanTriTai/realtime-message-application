@@ -39,6 +39,7 @@ public class ConversationService {
     private final FriendshipRepository         friendshipRepo;
     private final RedisMessagePublisher           redisPublisher;
     private final ConversationMemberCacheService  memberCacheService;
+    private final org.springframework.data.redis.core.StringRedisTemplate redisTemplate;
 
     public ConversationService(ConversationRepository conversationRepo,
                                ConversationMemberRepository memberRepo,
@@ -47,7 +48,8 @@ public class ConversationService {
                                PresenceService presenceService,
                                FriendshipRepository friendshipRepo,
                                RedisMessagePublisher redisPublisher,
-                               ConversationMemberCacheService memberCacheService) {
+                               ConversationMemberCacheService memberCacheService,
+                               org.springframework.data.redis.core.StringRedisTemplate redisTemplate) {
         this.conversationRepo    = conversationRepo;
         this.memberRepo          = memberRepo;
         this.userRepo            = userRepo;
@@ -56,6 +58,7 @@ public class ConversationService {
         this.friendshipRepo      = friendshipRepo;
         this.redisPublisher      = redisPublisher;
         this.memberCacheService  = memberCacheService;
+        this.redisTemplate       = redisTemplate;
     }
 
     // ──────────────────────────────────────────────────────────────────────
@@ -75,17 +78,32 @@ public class ConversationService {
                     .findByConversationIdAndUserId(conv.getId(), userId)
                     .orElse(null);
 
-            long lastReadId = 0L;
+            long unreadCount = 0L;
             if (membership != null) {
-                if (membership.getLastReadMessageId() != null) {
-                    lastReadId = membership.getLastReadMessageId();
-                } else if (conv.isGroup() && conv.getLastMessageId() != null) {
-                    // Thành viên nhóm chưa có lastReadMessageId (ví dụ mới vào nhóm)
-                    // -> Coi như đã đọc các tin trước khi vào nhóm để tránh tính unread quá khứ
-                    lastReadId = conv.getLastMessageId();
+                // Đọc seq đã đọc cao nhất (kết hợp DB + Redis buffer)
+                Long readSeq = membership.getLastReadSeq();
+                try {
+                    String rVal = (String) redisTemplate.opsForHash().get("receipt:read:" + conv.getId(), userId.toString());
+                    if (rVal != null) {
+                        readSeq = Math.max(readSeq != null ? readSeq : 0L, Long.parseLong(rVal));
+                    }
+                } catch (Exception ignored) {}
+
+                if (conv.getLastSeq() != null && conv.getLastSeq() > 0 && readSeq != null && readSeq >= conv.getLastSeq()) {
+                    // Đã đọc đến tin mới nhất
+                    unreadCount = 0L;
+                } else if (readSeq != null && readSeq > 0) {
+                    unreadCount = messageRepo.countUnreadBySeq(conv.getId(), userId, readSeq);
+                } else {
+                    long lastReadId = 0L;
+                    if (membership.getLastReadMessageId() != null) {
+                        lastReadId = membership.getLastReadMessageId();
+                    } else if (conv.isGroup() && conv.getLastMessageId() != null) {
+                        lastReadId = conv.getLastMessageId();
+                    }
+                    unreadCount = messageRepo.countUnread(conv.getId(), userId, lastReadId);
                 }
             }
-            long unreadCount = messageRepo.countUnread(conv.getId(), userId, lastReadId);
 
             if (conv.isDirect()) {
                 // [ADDED] Voi DIRECT: lay thong tin nguoi kia va trang thai online

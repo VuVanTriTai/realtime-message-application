@@ -127,7 +127,8 @@ public class RedisMessageSubscriber implements MessageListener {
                     stageSubscriberParseTimer.record(System.nanoTime() - startParse, TimeUnit.NANOSECONDS);
 
                     // ── Lớp phòng thủ cốt lõi: In-memory Dedupe (0.001 ms, ZERO network call) ──
-                    if (msg.id() != null) {
+                    // Bỏ qua dedupe nếu tin nhắn là sự kiện sửa hoặc xoá/thu hồi (để broadcast update)
+                    if (msg.id() != null && !msg.isDeleted() && !msg.isEdited()) {
                         long startDedupe = System.nanoTime();
                         Boolean isFirst = localDedupeCache.asMap().putIfAbsent(msg.id(), Boolean.TRUE) == null;
                         stageSubscriberDedupeTimer.record(System.nanoTime() - startDedupe, TimeUnit.NANOSECONDS);
@@ -220,10 +221,12 @@ public class RedisMessageSubscriber implements MessageListener {
             List<Long> memberIds = memberCache.getMemberIds(convId);
             Long senderId = (msg.sender() != null) ? msg.sender().id() : null;
 
+            boolean isUpdate = msg.isDeleted() || msg.isEdited();
             for (Long memberId : memberIds) {
                 // unreadIncrement=1: Frontend tự cộng badge, không cần server đếm DB
                 // senderId nhận 0 (người gửi không tăng badge của chính họ)
-                long unreadIncrement = (senderId != null && senderId.equals(memberId)) ? 0L : 1L;
+                // Khi sửa hoặc thu hồi tin nhắn: unreadIncrement = 0 (không tăng badge)
+                long unreadIncrement = (isUpdate || (senderId != null && senderId.equals(memberId))) ? 0L : 1L;
 
                 UserInboxEvent inboxEvent = UserInboxEvent.of(convId, msg, unreadIncrement);
                 messagingTemplate.convertAndSend("/topic/user." + memberId, inboxEvent);

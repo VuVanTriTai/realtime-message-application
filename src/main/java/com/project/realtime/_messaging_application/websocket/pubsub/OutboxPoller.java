@@ -155,7 +155,7 @@ public class OutboxPoller {
             }
 
             if (!doneIds.isEmpty()) {
-                outboxRepo.markAllDone(doneIds);
+                outboxRepo.deleteAllByIds(doneIds);
             }
             return pending.size();
         });
@@ -231,9 +231,11 @@ public class OutboxPoller {
     // ================================================================
 
     /**
-     * Moi 1 gio: xoa sach cac ban ghi DONE de giu bang gon.
+     * Moi 60 giay: xoa sach cac ban ghi DONE de giu bang gon.
+     * Giam tu 1 gio xuong 60s tranh tich luy DONE records gay cham SELECT SKIP LOCKED
+     * trong cac lan load test lien tiep.
      */
-    @Scheduled(fixedDelay = 3_600_000)
+    @Scheduled(fixedDelay = 60_000)
     @Transactional
     public void cleanupDone() {
         int deleted = outboxRepo.deleteDoneRecords();

@@ -2,7 +2,7 @@
  * 01_connection_hold.js — Kich ban 1: Giu ket noi (Connection Hold Test)
  * ======================================================================
  * Muc dich: Do RAM, file descriptor, GC khi tang dan ket noi:
- *   1K -> 5K -> 10K -> 15K connections ranh (chi heartbeat dinh ky, khong chat)
+ *   1K -> 5K -> 10K connections ranh (chi heartbeat dinh ky, khong chat)
  *
  * Chay:
  *   k6 run load-test/scripts/01_connection_hold.js
@@ -10,13 +10,13 @@
  * Co che hoat dong:
  *   1. Ham setup() chay 1 lan dau tien: dang nhap 200 users mau tu seed data
  *      lay san danh sach JWT token (tranh gay BCrypt/Auth storm len server).
- *   2. Ham default(data): Moi VU lay 1 token tu mảng data.tokens,
+ *   2. Ham default(data): Moi VU lay 1 token tu mang data.tokens,
  *      mo WebSocket, gui STOMP CONNECT, sau do giu ket noi va phat
  *      heartbeat '\n' moi 10 giay.
  */
 
 import { check, sleep } from "k6";
-import { stompConnectAndHold } from "./stomp-helper.js";
+import { stompSession } from "./stomp-helper.js";
 import { login } from "./auth-helper.js";
 import { Trend, Counter } from "k6/metrics";
 
@@ -35,11 +35,9 @@ export const options = {
     { duration: "3m", target: 1000 },   // Giu 1K trong 3 phut
     { duration: "3m", target: 5000 },   // Tang len 5K
     { duration: "3m", target: 5000 },   // Giu 5K
-    { duration: "3m", target: 10000 },   // Tang len 10K
-    { duration: "5m", target: 10000 },   // Giu 10K (do GC o day)
-    { duration: "2m", target: 15000 },   // Tang len 15K
-    { duration: "5m", target: 15000 },   // Giu 15K — dinh tong the
-    { duration: "2m", target: 0 },   // Giam ve 0
+    { duration: "3m", target: 10000 },  // Tang len 10K (muc tieu thiet ke kien truc)
+    { duration: "5m", target: 10000 },  // Giu 10K — dinh tong the (do GC, Heap, Socket)
+    { duration: "2m", target: 0 },      // Giam ve 0
   ],
   thresholds: {
     "ws_connect_time_ms": ["p(95)<500"], // 95% ket noi < 500ms
@@ -85,22 +83,30 @@ export default function (data) {
   const token = tokens[tokenIndex];
 
   const startTime = Date.now();
+  let connectedAt = null;
 
-  // 2. Ket noi WebSocket, gui STOMP CONNECT va giu ket noi 300 giay (5 phut)
-  // Trong 300s nay, client tu dong ban STOMP Heartbeat '\n' moi 10 giay
+  // 2. Ket noi WebSocket, gui STOMP CONNECT va giu ket noi
+  // Client tu dong ban STOMP Heartbeat '\n' moi 10 giay
   const holdSeconds = 1800;
-  const res = stompConnectAndHold(token, [], holdSeconds, null);
-
-  const duration = Date.now() - startTime;
+  const res = stompSession({
+    token,
+    durationSeconds: holdSeconds,
+    onConnected: () => {
+      connectedAt = Date.now();
+      connectTime.add(connectedAt - startTime);
+    },
+  });
 
   // 3. Danh gia ket qua ket noi
-  const success = check(res, {
+  const handshakeOk = check(res, {
     "WebSocket handshake 101": (r) => r && r.status === 101,
   });
 
-  if (success) {
-    connectTime.add(duration);
-  } else {
+  const stompOk = check(null, {
+    "STOMP CONNECTED received": () => connectedAt !== null,
+  });
+
+  if (!handshakeOk || !stompOk) {
     connectFails.add(1);
   }
 }

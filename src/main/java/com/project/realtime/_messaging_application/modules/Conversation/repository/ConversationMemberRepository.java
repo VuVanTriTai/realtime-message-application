@@ -81,6 +81,10 @@ public interface ConversationMemberRepository extends JpaRepository<Conversation
     /** Đếm số thành viên của một conversation */
     int countByConversationId(Long conversationId);
 
+    @Modifying
+    @Transactional
+    void deleteByConversationId(Long conversationId);
+
     /** Lấy danh sách userId của tất cả thành viên (dùng để push notification WebSocket) */
     @Query("SELECT cm.user.id FROM ConversationMember cm WHERE cm.conversation.id = :conversationId")
     List<Long> findUserIdsByConversationId(@Param("conversationId") Long conversationId);

@@ -170,13 +170,6 @@ public class ChatWebSocketHandler {
                 try {
                     redisPublisher.publish(saved.conversationId(), RedisEventType.NEW_MESSAGE, saved);
 
-                    // Phòng thủ lớp 1: Đánh dấu “đã publish” ở Redis (SET published:msg:{id} 1 EX 60, rất rẻ, không chiếm Hikari)
-                    try {
-                        stringRedisTemplate.opsForValue().set("published:msg:" + saved.id(), "1", Duration.ofSeconds(60));
-                    } catch (Exception reEx) {
-                        log.warn("Failed to set published marker in Redis for msgId={}: {}", saved.id(), reEx.getMessage());
-                    }
-
                     // Ghi nhận Stage 2 thuần túy: DB commit xong -> Redis publish xong (KHÔNG bị đội bởi DB write)
                     stageDbToRedisTimer.record(System.nanoTime() - s2Start, TimeUnit.NANOSECONDS);
 
@@ -281,7 +274,7 @@ public class ChatWebSocketHandler {
 
         receiptService.recordRead(
                 payload.conversationId(),
-                user.getId(),
+                user,
                 payload.readSeq(),
                 payload.messageId()
         );
@@ -302,7 +295,15 @@ public class ChatWebSocketHandler {
 
     public record ReadPayload(Long conversationId, Long messageId, Long readSeq) {}
 
-    public record ReadReceipt(Long conversationId, Long userId, Long messageId, Long seq) {}
+    public record ReadReceipt(
+            Long conversationId,
+            Long userId,
+            String username,
+            String displayName,
+            String avatarUrl,
+            Long messageId,
+            Long seq
+    ) {}
 
     public record ErrorPayload(String code, String message) {}
 }

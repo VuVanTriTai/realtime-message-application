@@ -1,10 +1,13 @@
 package com.project.realtime._messaging_application.modules.Conversation.service;
 
 import com.project.realtime._messaging_application.modules.Conversation.dto.MemberReceiptResponse;
+import com.project.realtime._messaging_application.modules.Conversation.entity.Conversation;
 import com.project.realtime._messaging_application.modules.Conversation.entity.ConversationMember;
 import com.project.realtime._messaging_application.modules.Conversation.repository.ConversationMemberRepository;
+import com.project.realtime._messaging_application.modules.Conversation.repository.ConversationRepository;
 import com.project.realtime._messaging_application.modules.Message.entity.Message;
 import com.project.realtime._messaging_application.modules.Message.repository.MessageRepository;
+import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.websocket.ChatWebSocketHandler.DeliveryReceipt;
 import com.project.realtime._messaging_application.websocket.ChatWebSocketHandler.ReadReceipt;
 import com.project.realtime._messaging_application.websocket.pubsub.RedisEventType;
@@ -41,6 +44,7 @@ public class ReceiptService {
     private final JdbcTemplate                  jdbcTemplate;
     private final ConversationMemberRepository  memberRepo;
     private final MessageRepository             messageRepo;
+    private final ConversationRepository        convRepo;
 
     // Lua script: cập nhật con trỏ delivered chỉ khi seq mới > seq cũ
     private final DefaultRedisScript<Long> deliveredScript;
@@ -52,11 +56,22 @@ public class ReceiptService {
                           JdbcTemplate jdbcTemplate,
                           ConversationMemberRepository memberRepo,
                           MessageRepository messageRepo) {
+        this(redisTemplate, redisPublisher, jdbcTemplate, memberRepo, messageRepo, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public ReceiptService(StringRedisTemplate redisTemplate,
+                          RedisMessagePublisher redisPublisher,
+                          JdbcTemplate jdbcTemplate,
+                          ConversationMemberRepository memberRepo,
+                          MessageRepository messageRepo,
+                          ConversationRepository convRepo) {
         this.redisTemplate   = redisTemplate;
         this.redisPublisher  = redisPublisher;
         this.jdbcTemplate    = jdbcTemplate;
         this.memberRepo      = memberRepo;
         this.messageRepo     = messageRepo;
+        this.convRepo        = convRepo;
 
         this.deliveredScript = new DefaultRedisScript<>();
         this.deliveredScript.setResultType(Long.class);
@@ -96,6 +111,17 @@ public class ReceiptService {
     public void recordDelivered(Long conversationId, Long userId, Long seq) {
         if (conversationId == null || userId == null || seq == null || seq <= 0) return;
 
+        Long resolvedSeq = seq;
+        Long maxSeq = null;
+        if (convRepo != null) {
+            maxSeq = convRepo.findById(conversationId)
+                    .map(Conversation::getLastSeq)
+                    .orElse(null);
+            if (maxSeq != null && maxSeq > 0 && resolvedSeq > maxSeq) {
+                resolvedSeq = maxSeq;
+            }
+        }
+
         String hashKey   = KEY_DELIVERED_PREFIX + conversationId;
         String dirtyKey  = KEY_DIRTY_MEMBERS;
         String memberKey = conversationId + ":" + userId;
@@ -105,16 +131,16 @@ public class ReceiptService {
                     deliveredScript,
                     List.of(hashKey, dirtyKey),
                     userId.toString(),
-                    seq.toString(),
+                    resolvedSeq.toString(),
                     memberKey
             );
 
             // result == 1 nghĩa là seq mới lớn hơn seq cũ, Redis đã được cập nhật
             if (result != null && result == 1L) {
                 // Publish event realtime qua Redis Pub/Sub để người gửi thấy đổi icon ngay
-                DeliveryReceipt receipt = new DeliveryReceipt(conversationId, userId, seq);
+                DeliveryReceipt receipt = new DeliveryReceipt(conversationId, userId, resolvedSeq);
                 redisPublisher.publish(conversationId, RedisEventType.DELIVERY_RECEIPT, receipt);
-                log.debug("Recorded DELIVERED conv={} user={} seq={}", conversationId, userId, seq);
+                log.debug("Recorded DELIVERED conv={} user={} seq={}", conversationId, userId, resolvedSeq);
             }
         } catch (Exception e) {
             log.warn("Failed to record delivered in Redis: {}", e.getMessage());
@@ -126,7 +152,15 @@ public class ReceiptService {
     // ──────────────────────────────────────────────────────────────────────────
 
     public void recordRead(Long conversationId, Long userId, Long seq, Long messageId) {
-        if (conversationId == null || userId == null) return;
+        if (userId == null) return;
+        User user = new User();
+        user.setId(userId);
+        recordRead(conversationId, user, seq, messageId);
+    }
+
+    public void recordRead(Long conversationId, User user, Long seq, Long messageId) {
+        if (conversationId == null || user == null) return;
+        Long userId = user.getId();
 
         // Nếu client chỉ truyền messageId (legacy) mà không có seq, tra cứu seq từ messageId
         Long resolvedSeq = seq;
@@ -137,6 +171,17 @@ public class ReceiptService {
         }
 
         if (resolvedSeq == null || resolvedSeq <= 0) return;
+
+        Long maxSeq = null;
+        if (convRepo != null) {
+            maxSeq = convRepo.findById(conversationId)
+                    .map(Conversation::getLastSeq)
+                    .orElse(null);
+            if (maxSeq != null && maxSeq > 0 && resolvedSeq > maxSeq) {
+                log.warn("Cap readSeq from {} to maxSeq {} for conv={}", resolvedSeq, maxSeq, conversationId);
+                resolvedSeq = maxSeq;
+            }
+        }
 
         String readHashKey      = KEY_READ_PREFIX + conversationId;
         String deliveredHashKey = KEY_DELIVERED_PREFIX + conversationId;
@@ -153,9 +198,35 @@ public class ReceiptService {
             );
 
             if (result != null && result == 1L) {
-                ReadReceipt receipt = new ReadReceipt(conversationId, userId, messageId, resolvedSeq);
-                redisPublisher.publish(conversationId, RedisEventType.READ_RECEIPT, receipt);
-                log.debug("Recorded READ conv={} user={} seq={} msgId={}", conversationId, userId, resolvedSeq, messageId);
+                if (messageId != null) {
+                    try {
+                        memberRepo.markRead(conversationId, userId, messageId);
+                    } catch (Exception ignored) {}
+                }
+                // Kiểm tra kích cỡ nhóm để quyết định có push realtime không
+                int memberCount = memberRepo.countByConversationId(conversationId);
+
+                // Chỉ push READ_RECEIPT khi nhóm ≤ 50 người (Sender-Only Fan-out)
+                if (memberCount <= 50) {
+                    ReadReceipt receipt = new ReadReceipt(
+                            conversationId,
+                            userId,
+                            user.getUsername(),
+                            user.getDisplayName(),
+                            user.getAvatarUrl(),
+                            messageId,
+                            resolvedSeq
+                    );
+                    // Tìm sender của tin nhắn tại resolvedSeq để chỉ gửi cho họ
+                    // Nếu direct (2 người) hoặc nhóm nhỏ, publish toàn conversation (ChatWebSocketHandler lọc bên nhận)
+                    redisPublisher.publish(conversationId, RedisEventType.READ_RECEIPT, receipt);
+                    log.debug("Recorded READ conv={} user={} seq={} msgId={} members={} → pushed realtime",
+                            conversationId, userId, resolvedSeq, messageId, memberCount);
+                } else {
+                    // Nhóm > 50: chỉ ghi vào Redis, không push realtime (truy vấn API khi cần)
+                    log.debug("Recorded READ conv={} user={} seq={} msgId={} members={} → skip realtime (large group)",
+                            conversationId, userId, resolvedSeq, messageId, memberCount);
+                }
             }
         } catch (Exception e) {
             log.warn("Failed to record read in Redis: {}", e.getMessage());
@@ -199,7 +270,14 @@ public class ReceiptService {
                 } catch (NumberFormatException ignored) {}
             }
 
-            list.add(new MemberReceiptResponse(uid, deliveredSeq, readSeq));
+            list.add(new MemberReceiptResponse(
+                    uid,
+                    cm.getUser().getUsername(),
+                    cm.getUser().getDisplayName(),
+                    cm.getUser().getAvatarUrl(),
+                    deliveredSeq,
+                    readSeq
+            ));
         }
 
         return list;

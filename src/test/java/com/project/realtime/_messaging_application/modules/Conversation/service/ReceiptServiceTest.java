@@ -5,6 +5,7 @@ import com.project.realtime._messaging_application.modules.Conversation.entity.C
 import com.project.realtime._messaging_application.modules.Conversation.entity.ConversationMember;
 import com.project.realtime._messaging_application.modules.Conversation.entity.MemberRole;
 import com.project.realtime._messaging_application.modules.Conversation.repository.ConversationMemberRepository;
+import com.project.realtime._messaging_application.modules.Conversation.repository.ConversationRepository;
 import com.project.realtime._messaging_application.modules.Message.repository.MessageRepository;
 import com.project.realtime._messaging_application.modules.User.Entity.User;
 import com.project.realtime._messaging_application.websocket.pubsub.RedisEventType;
@@ -46,6 +47,9 @@ class ReceiptServiceTest {
 
     @Mock
     private MessageRepository messageRepo;
+
+    @Mock
+    private ConversationRepository convRepo;
 
     @Mock
     private SetOperations<String, String> setOps;

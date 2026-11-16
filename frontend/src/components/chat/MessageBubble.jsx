@@ -68,6 +68,8 @@ export default function MessageBubble({
   onDelete,
   onReply,
   onScrollToMessage,
+  readers = [],   // [{userId, displayName, avatarUrl}] — ai đã đọc tin này
+  isGroup = false,
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState(message.content || '');
@@ -275,7 +277,7 @@ export default function MessageBubble({
               <span className="bubble-time">{formatTime(message.createdAt)}</span>
               {isOwn && !isDeleted && (
                 <span className="msg-status-icon">
-                  {message.status === 'READ' ? (
+                  {(message.status === 'READ' || (readers && readers.length > 0)) ? (
                     <CheckCheck size={14} className="icon-read" title="Đã xem" />
                   ) : message.status === 'DELIVERED' ? (
                     <CheckCheck size={14} className="icon-delivered" title="Đã nhận" />
@@ -303,6 +305,27 @@ export default function MessageBubble({
             </div>
           )}
         </div>
+
+        {/* Read Avatars Row — bên trong message-content-wrapper, dưới bubble, căn phải */}
+        {isOwn && readers.length > 0 && (
+          <div className="read-avatars-row">
+            {readers.slice(0, 5).map((r) => (
+              <Avatar
+                key={r.userId}
+                name={r.displayName || r.username || '?'}
+                src={r.avatarUrl}
+                size="xs"
+                className="read-avatar-xs"
+                title={`${r.displayName || r.username || 'Người dùng'} đã xem`}
+              />
+            ))}
+            {readers.length > 5 && (
+              <span className="read-avatars-overflow" title={`${readers.length} người đã xem`}>
+                +{readers.length - 5}
+              </span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

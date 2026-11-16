@@ -128,6 +128,23 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
             @Param("lastReadMessageId") Long lastReadMessageId
     );
 
+    /**
+     * Đếm số tin chưa đọc theo sequence (seq > readSeq).
+     * Dùng index uq_messages_conv_seq (conversation_id, seq ASC).
+     */
+    @Query("""
+            SELECT COUNT(m) FROM Message m
+            WHERE m.conversation.id = :conversationId
+              AND m.sender.id      != :userId
+              AND m.deletedAt      IS NULL
+              AND (:readSeq IS NULL OR m.seq > :readSeq)
+            """)
+    long countUnreadBySeq(
+            @Param("conversationId") Long conversationId,
+            @Param("userId")         Long userId,
+            @Param("readSeq")        Long readSeq
+    );
+
     // ──────────────────────────────────────────────────────────────────────
     // Soft-delete & edit (chỉnh sửa trực tiếp tại DB để tránh load entity)
     // ──────────────────────────────────────────────────────────────────────
@@ -206,4 +223,9 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
             @Param("senderId")   Long senderId,
             @Param("newContent") String newContent
     );
+
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM Message m WHERE m.conversation.id = :conversationId")
+    void deleteByConversationId(@Param("conversationId") Long conversationId);
 }

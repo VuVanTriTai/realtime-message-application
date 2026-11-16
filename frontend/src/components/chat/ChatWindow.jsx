@@ -37,6 +37,9 @@ export default function ChatWindow({
   const [hasMore, setHasMore] = useState(false);
   const [cursor, setCursor] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
+  // readersMap: Map<messageSeq, [{userId, displayName, avatarUrl}]>
+  // Dùng để render "ai đã đọc đến tin này" (Read Avatar feature)
+  const [readersMap, setReadersMap] = useState(new Map());
 
   const messagesEndRef = useRef(null);
   const messageListRef = useRef(null);
@@ -55,11 +58,13 @@ export default function ChatWindow({
   const onPresenceEventRef = useRef(onPresenceEvent);
   const onMarkReadRef = useRef(onMarkRead);
   const currentUserRef = useRef(currentUser);
+  const conversationRef = useRef(conversation);
   useEffect(() => { onMessageSentRef.current = onMessageSent; }, [onMessageSent]);
   useEffect(() => { onTypingEventRef.current = onTypingEvent; }, [onTypingEvent]);
   useEffect(() => { onPresenceEventRef.current = onPresenceEvent; }, [onPresenceEvent]);
   useEffect(() => { onMarkReadRef.current = onMarkRead; }, [onMarkRead]);
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+  useEffect(() => { conversationRef.current = conversation; }, [conversation]);
 
   const isGroup = conversation?.type === 'GROUP';
   // [FIX] DIRECT: dung otherUserName (ten nguoi kia tu backend); GROUP: dung name/title
@@ -72,26 +77,30 @@ export default function ChatWindow({
   const sortByTime = (arr) =>
     [...arr].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
 
-  // [DEBOUNCED ACK DELIVERED (1.5s)]
+  // [DEBOUNCED ACK DELIVERED (300ms)]
   const triggerDebouncedDelivered = useCallback((convId, seq) => {
-    if (!seq || seq <= 0) return;
-    pendingDeliveredSeqRef.current = Math.max(pendingDeliveredSeqRef.current, seq);
+    if (!seq || seq <= 0 || !convId) return;
+    if (Number(convId) !== Number(conversationRef.current?.id)) return;
+    pendingDeliveredSeqRef.current = Math.max(pendingDeliveredSeqRef.current, Number(seq));
     if (deliveredTimerRef.current) clearTimeout(deliveredTimerRef.current);
     deliveredTimerRef.current = setTimeout(() => {
+      if (Number(convId) !== Number(conversationRef.current?.id)) return;
       const target = pendingDeliveredSeqRef.current;
       if (target > 0) {
         wsSendDelivered(convId, target);
         conversationApi.markDelivered(convId, target).catch(() => {});
       }
-    }, 1500);
+    }, 300);
   }, [wsSendDelivered]);
 
-  // [DEBOUNCED ACK READ (0.8s)]
+  // [DEBOUNCED ACK READ (400ms)]
   const triggerDebouncedRead = useCallback((convId, seq, msgId) => {
-    if (!seq && !msgId) return;
-    if (seq) pendingReadSeqRef.current = Math.max(pendingReadSeqRef.current, seq);
+    if (!convId || (!seq && !msgId)) return;
+    if (Number(convId) !== Number(conversationRef.current?.id)) return;
+    if (seq) pendingReadSeqRef.current = Math.max(pendingReadSeqRef.current, Number(seq));
     if (readTimerRef.current) clearTimeout(readTimerRef.current);
     readTimerRef.current = setTimeout(() => {
+      if (Number(convId) !== Number(conversationRef.current?.id)) return;
       const targetSeq = pendingReadSeqRef.current;
       wsSendRead(convId, msgId, targetSeq > 0 ? targetSeq : null);
       if (targetSeq > 0) {
@@ -100,7 +109,7 @@ export default function ChatWindow({
         conversationApi.markRead(convId, msgId).catch(() => {});
       }
       if (onMarkReadRef.current) onMarkReadRef.current(convId);
-    }, 800);
+    }, 400);
   }, [wsSendRead]);
 
   // Load initial history and receipts
@@ -116,17 +125,18 @@ export default function ChatWindow({
       const rawList = Array.isArray(historyData) ? historyData : (historyData.content || []);
 
       // Lấy maxDeliveredSeq và maxReadSeq của người khác để gán tick cho tin của mình
-      const currentUserId = currentUserRef.current?.id;
+      const currentUserId = currentUserRef.current?.id != null ? Number(currentUserRef.current.id) : null;
       const otherReceipts = Array.isArray(receiptsData)
-        ? receiptsData.filter((r) => r.userId !== currentUserId)
+        ? receiptsData.filter((r) => Number(r.userId) !== currentUserId)
         : [];
-      const maxOtherDelivered = otherReceipts.reduce((max, r) => Math.max(max, r.lastDeliveredSeq || 0), 0);
-      const maxOtherRead      = otherReceipts.reduce((max, r) => Math.max(max, r.lastReadSeq || 0), 0);
+      const maxOtherDelivered = otherReceipts.reduce((max, r) => Math.max(max, Number(r.lastDeliveredSeq) || 0), 0);
+      const maxOtherRead      = otherReceipts.reduce((max, r) => Math.max(max, Number(r.lastReadSeq) || 0), 0);
 
       const msgList = rawList.map((m) => {
-        const isMine = m.sender?.id === currentUserId || m.senderId === currentUserId;
+        const senderId = m.sender?.id != null ? Number(m.sender.id) : (m.senderId != null ? Number(m.senderId) : null);
+        const isMine = currentUserId != null && senderId != null && senderId === currentUserId;
         if (isMine) {
-          const s = m.seq || 0;
+          const s = Number(m.seq) || 0;
           let status = m.status || 'SENT';
           if (s > 0 && s <= maxOtherRead) status = 'READ';
           else if (s > 0 && s <= maxOtherDelivered) status = 'DELIVERED';
@@ -137,6 +147,36 @@ export default function ChatWindow({
 
       setMessages(sortByTime(msgList));
 
+      // Build readersMap từ receipts: ai đã đọc đến seq nào
+      // Với nhóm <= 50 người → dùng để render read avatar dưới tin
+      const memberCount = conversationRef.current?.memberCount || 2;
+      if (memberCount <= 50 && Array.isArray(receiptsData)) {
+        const newMap = new Map();
+        receiptsData.forEach((r) => {
+          if (Number(r.userId) === currentUserId) return; // bỏ qua mình
+          const readSeq = Number(r.lastReadSeq) || 0;
+          if (readSeq <= 0) return;
+          // Tìm tin nhắn mình gửi có seq cao nhất mà r đã đọc qua
+          const targetMsg = [...msgList]
+            .filter((m) => {
+              const sId = m.sender?.id != null ? Number(m.sender.id) : (m.senderId != null ? Number(m.senderId) : null);
+              return currentUserId != null && sId === currentUserId && (Number(m.seq) || 0) <= readSeq;
+            })
+            .sort((a, b) => (Number(b.seq) || 0) - (Number(a.seq) || 0))[0];
+          if (!targetMsg) return;
+          const seq = targetMsg.seq;
+          const readers = newMap.get(seq) || [];
+          readers.push({
+            userId: r.userId,
+            username: r.username || '',
+            displayName: r.displayName || r.username || 'Người dùng',
+            avatarUrl: r.avatarUrl || null,
+          });
+          newMap.set(seq, readers);
+        });
+        setReadersMap(newMap);
+      }
+
       if (msgList.length > 0) {
         setCursor(msgList[0].id); // oldest message id for cursor pagination
         setHasMore(msgList.length >= 30);
@@ -146,9 +186,10 @@ export default function ChatWindow({
         lastSeqRef.current = highestSeq;
 
         // Tự động gửi ACK delivered & read cho tin nhắn cuối từ người khác
-        const newestOther = [...msgList].reverse().find(
-          (m) => m.sender?.id !== currentUserId && m.senderId !== currentUserId
-        );
+        const newestOther = [...msgList].reverse().find((m) => {
+          const sId = m.sender?.id != null ? Number(m.sender.id) : (m.senderId != null ? Number(m.senderId) : null);
+          return currentUserId != null && sId != null && sId !== currentUserId;
+        });
         if (newestOther) {
           triggerDebouncedDelivered(conversation.id, newestOther.seq);
           triggerDebouncedRead(conversation.id, newestOther.seq, newestOther.id);
@@ -200,7 +241,21 @@ export default function ChatWindow({
   useEffect(() => {
     if (!conversation?.id) return;
 
+    // Reset sequence tracking & timers for current active conversation
+    pendingDeliveredSeqRef.current = 0;
+    pendingReadSeqRef.current = 0;
+    lastSeqRef.current = 0;
+    if (deliveredTimerRef.current) {
+      clearTimeout(deliveredTimerRef.current);
+      deliveredTimerRef.current = null;
+    }
+    if (readTimerRef.current) {
+      clearTimeout(readTimerRef.current);
+      readTimerRef.current = null;
+    }
+
     loadHistory();
+    setReadersMap(new Map()); // Reset read avatars khi đổi conversation
 
     const unsubscribe = subscribeToConversation(conversation.id, {
       onMessage: async (newMsg) => {
@@ -233,14 +288,21 @@ export default function ChatWindow({
           );
           if (index !== -1) {
             const updated = [...prev];
-            updated[index] = { ...newMsg, status: newMsg.status || updated[index].status || 'SENT' };
+            const currentStatus = updated[index].status;
+            // Nếu đã là DELIVERED hoặc READ thì giữ nguyên, ngược lại tin đã được server xác nhận lưu thành công -> 'SENT' (1 tick)
+            const finalStatus = (currentStatus === 'READ' || currentStatus === 'DELIVERED')
+              ? currentStatus
+              : (newMsg.status || 'SENT');
+            updated[index] = { ...newMsg, status: finalStatus };
             return sortByTime(updated);
           }
           return sortByTime([...prev, { ...newMsg, status: newMsg.status || 'SENT' }]);
         });
 
         // --- 3. [DUAL ACK DEBOUNCE] ---
-        if (newMsg.sender?.id !== currentUserRef.current?.id) {
+        const newMsgSenderId = newMsg.sender?.id != null ? Number(newMsg.sender.id) : (newMsg.senderId != null ? Number(newMsg.senderId) : null);
+        const myUserId = currentUserRef.current?.id != null ? Number(currentUserRef.current.id) : null;
+        if (myUserId != null && newMsgSenderId != null && newMsgSenderId !== myUserId) {
           // Tin đã tới thiết bị -> trigger Debounced Delivered (1.5s)
           triggerDebouncedDelivered(conversation.id, newMsg.seq);
 
@@ -260,12 +322,16 @@ export default function ChatWindow({
 
       // [REALTIME DELIVERED RECEIPT - 2 TICK XÁM]
       onDelivered: (receipt) => {
-        if (receipt.userId !== currentUserRef.current?.id) {
+        const myId = currentUserRef.current?.id != null ? Number(currentUserRef.current.id) : null;
+        const receiptUserId = receipt.userId != null ? Number(receipt.userId) : null;
+
+        if (myId != null && receiptUserId != null && receiptUserId !== myId) {
           setMessages((prev) =>
             prev.map((msg) => {
-              const isMine = msg.sender?.id === currentUserRef.current?.id || msg.senderId === currentUserRef.current?.id;
+              const senderId = msg.sender?.id != null ? Number(msg.sender.id) : (msg.senderId != null ? Number(msg.senderId) : null);
+              const isMine = senderId != null && senderId === myId;
               if (isMine && msg.status !== 'READ') {
-                if (receipt.seq && msg.seq && msg.seq <= receipt.seq) {
+                if (receipt.seq && msg.seq && Number(msg.seq) <= Number(receipt.seq)) {
                   return { ...msg, status: 'DELIVERED' };
                 }
               }
@@ -275,22 +341,62 @@ export default function ChatWindow({
         }
       },
 
-      // [REALTIME READ RECEIPT - 2 TICK XANH]
+      // [REALTIME READ RECEIPT - 2 TICK XANH & READ AVATAR]
       onRead: (receipt) => {
-        if (receipt.userId !== currentUserRef.current?.id) {
-          setMessages((prev) =>
-            prev.map((msg) => {
-              const isMine = msg.sender?.id === currentUserRef.current?.id || msg.senderId === currentUserRef.current?.id;
+        const myId = currentUserRef.current?.id != null ? Number(currentUserRef.current.id) : null;
+        const receiptUserId = receipt.userId != null ? Number(receipt.userId) : null;
+
+        if (myId != null && receiptUserId != null && receiptUserId !== myId) {
+          setMessages((prev) => {
+            const updated = prev.map((msg) => {
+              const senderId = msg.sender?.id != null ? Number(msg.sender.id) : (msg.senderId != null ? Number(msg.senderId) : null);
+              const isMine = senderId != null && senderId === myId;
               if (isMine) {
-                const matchesSeq = receipt.seq && msg.seq && msg.seq <= receipt.seq;
-                const matchesId  = receipt.messageId && msg.id && msg.id <= receipt.messageId;
+                const matchesSeq = receipt.seq && msg.seq && Number(msg.seq) <= Number(receipt.seq);
+                const matchesId  = receipt.messageId && msg.id && Number(msg.id) <= Number(receipt.messageId);
                 if (matchesSeq || matchesId) {
                   return { ...msg, status: 'READ' };
                 }
               }
               return msg;
-            })
-          );
+            });
+
+            // Cập nhật readersMap cho nhóm <= 50 người
+            const memberCount = conversationRef.current?.memberCount || 2;
+            if (memberCount <= 50 && receipt.seq) {
+              const targetMsg = [...updated]
+                .filter((m) => {
+                  const sId = m.sender?.id != null ? Number(m.sender.id) : (m.senderId != null ? Number(m.senderId) : null);
+                  return sId === myId && Number(m.seq || 0) <= Number(receipt.seq);
+                })
+                .sort((a, b) => Number(b.seq || 0) - Number(a.seq || 0))[0];
+
+              if (targetMsg && targetMsg.seq) {
+                setTimeout(() => {
+                  setReadersMap((oldMap) => {
+                    const newMap = new Map(oldMap);
+                    newMap.forEach((readers, seq) => {
+                      if (Number(seq) !== Number(targetMsg.seq)) {
+                        newMap.set(seq, readers.filter((r) => Number(r.userId) !== receiptUserId));
+                      }
+                    });
+                    const existing = newMap.get(targetMsg.seq) || [];
+                    const filtered = existing.filter((r) => Number(r.userId) !== receiptUserId);
+                    filtered.push({
+                      userId: receipt.userId,
+                      username: receipt.username || '',
+                      displayName: receipt.displayName || receipt.username || 'Người dùng',
+                      avatarUrl: receipt.avatarUrl || null,
+                    });
+                    newMap.set(targetMsg.seq, filtered);
+                    return newMap;
+                  });
+                }, 0);
+              }
+            }
+
+            return updated;
+          });
         }
       },
 
@@ -307,8 +413,17 @@ export default function ChatWindow({
 
     return () => {
       unsubscribe();
-      if (deliveredTimerRef.current) clearTimeout(deliveredTimerRef.current);
-      if (readTimerRef.current) clearTimeout(readTimerRef.current);
+      if (deliveredTimerRef.current) {
+        clearTimeout(deliveredTimerRef.current);
+        deliveredTimerRef.current = null;
+      }
+      if (readTimerRef.current) {
+        clearTimeout(readTimerRef.current);
+        readTimerRef.current = null;
+      }
+      pendingDeliveredSeqRef.current = 0;
+      pendingReadSeqRef.current = 0;
+      lastSeqRef.current = 0;
     };
   }, [conversation?.id, loadHistory, subscribeToConversation, triggerDebouncedDelivered, triggerDebouncedRead]);
 
@@ -461,6 +576,9 @@ export default function ChatWindow({
     try {
       const updated = await messageApi.editMessage(msgId, newContent);
       setMessages((prev) => prev.map((m) => (m.id === msgId ? updated : m)));
+      if (onMessageSentRef.current) {
+        onMessageSentRef.current(updated);
+      }
     } catch (err) {
       alert('Không thể chỉnh sửa tin nhắn: ' + err.message);
     }
@@ -477,6 +595,17 @@ export default function ChatWindow({
             : m
         )
       );
+      // Cập nhật ngay preview ở sidebar nếu đây là tin nhắn cuối cùng
+      if (onMessageSentRef.current) {
+        onMessageSentRef.current({
+          id: msgId,
+          conversationId: conversation.id,
+          isDeleted: true,
+          deleted: true,
+          content: null,
+          mediaUrl: null,
+        });
+      }
     } catch (err) {
       alert('Không thể thu hồi tin nhắn: ' + (err.message || 'Đã có lỗi xảy ra'));
     }
@@ -582,6 +711,12 @@ export default function ChatWindow({
             const senderId = msg.sender?.id != null ? Number(msg.sender.id) : (msg.senderId != null ? Number(msg.senderId) : null);
             const isOwnMsg = myId != null && senderId != null && myId === senderId;
 
+            // Read avatar: chỉ hiển thị cho tin mình gửi, nhóm <= 50 người
+            const memberCount = conversation?.memberCount || 2;
+            const readers = (isOwnMsg && memberCount <= 50)
+              ? (readersMap.get(msg.seq) || [])
+              : [];
+
             return (
               <ErrorBoundary key={msg.id}>
                 <MessageBubble
@@ -592,6 +727,8 @@ export default function ChatWindow({
                   onDelete={handleDeleteMessage}
                   onReply={handleReply}
                   onScrollToMessage={handleScrollToMessage}
+                  readers={readers}
+                  isGroup={isGroup}
                 />
               </ErrorBoundary>
             );

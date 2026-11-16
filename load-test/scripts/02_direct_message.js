@@ -19,6 +19,7 @@
  */
 
 import { sleep, check } from "k6";
+import exec from "k6/execution";
 import { Trend, Counter, Rate } from "k6/metrics";
 import { textSummary } from "https://jslib.k6.io/k6-summary/0.0.1/index.js";
 import { stompSession } from "./stomp-helper.js";
@@ -33,32 +34,35 @@ const msgReceived = new Counter("messages_received_total");
 const errorRate   = new Rate("message_error_rate");
 
 // ============================================================
-// Thời gian vòng đời: Vào trước 10s - Ra sau 15s (Tránh mất tin giả)
+// Thời gian vòng đời: Vào trước 20s - Ra sau 20s (Tránh mất tin giả)
 // ============================================================
-const SENDER_START_DELAY  = 10;  // Chờ 10s cho 100% receiver subscribe xong
+// SENDER_START_DELAY: Phải đủ lớn để 100% receiver hoàn thành SUBSCRIBE trước khi gửi tin.
+//   - Warm JVM: 5-8s là đủ. Cold JVM: có thể cần 15-20s.
+//   - Giá trị 20s đủ an toàn cho Cold JVM trên LAN.
+const SENDER_START_DELAY  = 20;  // Tăng từ 10s → 20s, an toàn cho Cold JVM
 const SEND_DURATION_SEC   = 300; // 5 phút gửi tin liên tục (1 tin / 2.5s)
-const RECEIVER_DRAIN_TIME = 15;  // Receiver sống thêm 15s để hứng sạch tin cuối
-const RECEIVER_TOTAL_SEC  = SENDER_START_DELAY + SEND_DURATION_SEC + RECEIVER_DRAIN_TIME; // 325s (5m25s)
+const RECEIVER_DRAIN_TIME = 20;  // Tăng từ 15s → 20s, đủ cho Outbox Poller (1s/poll) flush tin cuối
+const RECEIVER_TOTAL_SEC  = SENDER_START_DELAY + SEND_DURATION_SEC + RECEIVER_DRAIN_TIME; // 340s (5m40s)
 
 export const options = {
+  setupTimeout: "120s", // 50 cặp = 150 HTTP requests; với Cold JVM ~16-20s, buffer an toàn
   scenarios: {
-    // 1. Nhóm Người nhận (User B): Mở WebSocket từ giây 0s, sống bao trùm 5m25s
+    // 1. Nhóm Người nhận (User B): Mở WebSocket từ giây 0s, sống bao trùm toàn bộ bài test
     receivers: {
-      executor:     "constant-vus",
+      executor:     "per-vu-iterations",
       exec:         "receiverScenario",
       vus:          50,
-      startTime:    "0s",
-      duration:     `${RECEIVER_TOTAL_SEC}s`,
-      gracefulStop: "5s",
+      iterations:   1,
+      maxDuration:  `${RECEIVER_TOTAL_SEC + 30}s`,
     },
-    // 2. Nhóm Người gửi (User A): Bắt đầu ở giây thứ 10, chạy đúng 5 phút rồi dừng
+    // 2. Nhóm Người gửi (User A): Bắt đầu sau khi receivers đã sẵn sàng (giây thứ 20), chạy đúng 5 phút rồi dừng
     senders: {
-      executor:     "constant-vus",
+      executor:     "per-vu-iterations",
       exec:         "senderScenario",
       vus:          50,
+      iterations:   1,
       startTime:    `${SENDER_START_DELAY}s`,
-      duration:     `${SEND_DURATION_SEC}s`,
-      gracefulStop: "5s",
+      maxDuration:  `${SEND_DURATION_SEC + 30}s`,
     },
   },
   thresholds: {
@@ -88,7 +92,12 @@ export function setup() {
     }
 
     const convs = getMyConversations(tokenA);
-    const directConv = convs.find((c) => c.type === "DIRECT");
+    const directConv = convs.find(
+      (c) => c.type === "DIRECT" &&
+             (c.otherUserName === receiverName ||
+              c.otherUserName === `LoadTest User #${2 * i}` ||
+              !c.otherUserName)
+    ) || convs.find((c) => c.type === "DIRECT");
 
     if (directConv) {
       pairs.push({
@@ -104,7 +113,7 @@ export function setup() {
     sleep(0.02);
   }
 
-  console.log(`==> [Setup] Đã sẵn sàng ${pairs.length} cặp chat 1-1. Senders gửi trong 5m, Receivers mở 5m25s.`);
+  console.log(`==> [Setup] Đã sẵn sàng ${pairs.length} cặp chat 1-1. Senders gửi trong ${SEND_DURATION_SEC}s, Receivers mở ${RECEIVER_TOTAL_SEC}s.`);
   if (pairs.length === 0) {
     throw new Error("Không tìm thấy conversation 1-1 nào! Vui lòng kiểm tra seed V6/V8.");
   }
@@ -116,15 +125,25 @@ export function setup() {
 // Scenario 1: Người nhận (User B) qua WebSocket STOMP
 // ============================================================
 export function receiverScenario(data) {
-  const pair = data.pairs[(__VU - 1) % data.pairs.length];
+  const pairIndex = exec.scenario.iterationInTest % data.pairs.length;
+  const pair = data.pairs[pairIndex];
 
   stompSession({
     token:           pair.receiverToken,
     conversationIds: [pair.convId],
-    durationSeconds: RECEIVER_TOTAL_SEC + 5,
+    durationSeconds: RECEIVER_TOTAL_SEC,
     onMessage: (msg) => {
-      if (msg && typeof msg.content === "string" && msg.content.startsWith("k6|")) {
-        const parts  = msg.content.split("|");
+      let content = null;
+      if (msg && typeof msg.content === "string") {
+        content = msg.content;
+      } else if (msg && msg.lastMessage && typeof msg.lastMessage.content === "string") {
+        content = msg.lastMessage.content;
+      } else if (msg && msg.message && typeof msg.message.content === "string") {
+        content = msg.message.content;
+      }
+
+      if (content && content.startsWith("k6|")) {
+        const parts  = content.split("|");
         const sentAt = parseInt(parts[1], 10);
 
         if (!isNaN(sentAt)) {
@@ -141,12 +160,13 @@ export function receiverScenario(data) {
 // Scenario 2: Người gửi (User A) qua WebSocket STOMP
 // ============================================================
 export function senderScenario(data) {
-  const pair = data.pairs[(__VU - 1) % data.pairs.length];
+  const pairIndex = exec.scenario.iterationInTest % data.pairs.length;
+  const pair = data.pairs[pairIndex];
 
   stompSession({
     token:           pair.senderToken,
     conversationIds: [],
-    durationSeconds: SEND_DURATION_SEC + 5,
+    durationSeconds: SEND_DURATION_SEC,
     onConnected: (socket, sendFrame) => {
       socket.setInterval(() => {
         const sentAt      = Date.now();

@@ -47,7 +47,15 @@ public interface MessageOutboxRepository extends JpaRepository<MessageOutbox, Lo
     List<MessageOutbox> findPendingWithLock(@Param("limit") int limit);
 
     /**
-     * Fast Path: Đánh dấu DONE theo message_id ngay khi publish trực tiếp thành công.
+     * Fast Path: Xóa bản ghi outbox theo message_id ngay khi publish trực tiếp thành công (Delete-on-success).
+     */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MessageOutbox o WHERE o.messageId = :messageId")
+    int deleteByMessageId(@Param("messageId") Long messageId);
+
+    /**
+     * Fast Path cũ (giữ tương thích): Đánh dấu DONE theo message_id.
      */
     @Modifying
     @Transactional
@@ -55,9 +63,16 @@ public interface MessageOutboxRepository extends JpaRepository<MessageOutbox, Lo
     int markDoneByMessageId(@Param("messageId") Long messageId);
 
     /**
-     * Batch update theo messageId có điều kiện (WHERE status = 'PENDING').
-     * Idempotent: chỉ chuyển các bản ghi đang PENDING sang DONE.
-     * Số dòng bị ảnh hưởng chỉ dùng để log, vô hại nếu bản ghi đã được xử lý.
+     * Batch delete theo messageId (Delete-on-success theo lô cho OutboxBatchService).
+     * Loại bỏ hoàn toàn chi phí UPDATE tuple và nhu cầu chạy cleanup job.
+     */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MessageOutbox o WHERE o.messageId IN :messageIds")
+    int deleteAllByMessageIds(@Param("messageIds") java.util.Collection<Long> messageIds);
+
+    /**
+     * Batch update theo messageId có điều kiện (giữ tương thích).
      */
     @Modifying
     @Transactional
@@ -65,7 +80,15 @@ public interface MessageOutboxRepository extends JpaRepository<MessageOutbox, Lo
     int markAllDoneByMessageIds(@Param("messageIds") java.util.Collection<Long> messageIds);
 
     /**
-     * Batch update: Đánh dấu DONE hàng loạt trong 1 câu lệnh duy nhất (tối ưu IO).
+     * Batch delete theo outbox ID (dùng cho OutboxPoller sau khi cứu hộ thành công).
+     */
+    @Modifying
+    @Transactional
+    @Query("DELETE FROM MessageOutbox o WHERE o.id IN :ids")
+    int deleteAllByIds(@Param("ids") java.util.Collection<Long> ids);
+
+    /**
+     * Batch update: Đánh dấu DONE hàng loạt trong 1 câu lệnh duy nhất (giữ tương thích).
      */
     @Modifying
     @Transactional
@@ -73,8 +96,7 @@ public interface MessageOutboxRepository extends JpaRepository<MessageOutbox, Lo
     int markAllDone(@Param("ids") List<Long> ids);
 
     /**
-     * Xoa sach cac ban ghi DONE de giu bang gon.
-     * Goi boi cleanup scheduler (e.g. moi gio).
+     * Xoa sach cac ban ghi DONE de giu bang gon (neu con ban ghi DONE cu).
      */
     @Modifying
     @Transactional

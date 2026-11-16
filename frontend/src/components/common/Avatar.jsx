@@ -28,12 +28,13 @@ export default function Avatar({
   isOnline,
   showStatus = false,
   className = '',
+  title,
 }) {
   const color = getColor(name);
   const initials = getInitials(name);
 
   return (
-    <div className={`avatar-wrapper avatar-${size} ${className}`}>
+    <div className={`avatar-wrapper avatar-${size} ${className}`} title={title}>
       {src ? (
         <img src={src} alt={name} className="avatar-img" />
       ) : (

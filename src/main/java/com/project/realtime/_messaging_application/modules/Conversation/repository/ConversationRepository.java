@@ -1,6 +1,9 @@
 package com.project.realtime._messaging_application.modules.Conversation.repository;
 
 import com.project.realtime._messaging_application.modules.Conversation.entity.Conversation;
+import com.project.realtime._messaging_application.modules.Conversation.entity.ConversationType;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -88,5 +91,24 @@ public interface ConversationRepository extends JpaRepository<Conversation, Long
     boolean isMember(
             @Param("conversationId") Long conversationId,
             @Param("userId")         Long userId
+    );
+
+    // ──────────────────────────────────────────────────────────────────────
+    // Admin management queries
+    // ──────────────────────────────────────────────────────────────────────
+
+    long countByType(ConversationType type);
+
+    @Query("""
+            SELECT c FROM Conversation c
+            WHERE (:search IS NULL OR :search = ''
+                   OR LOWER(c.name) LIKE LOWER(CONCAT('%', :search, '%')))
+              AND (:type IS NULL OR c.type = :type)
+            ORDER BY c.createdAt DESC
+            """)
+    Page<Conversation> searchConversationsForAdmin(
+            @Param("search") String search,
+            @Param("type")   ConversationType type,
+            Pageable pageable
     );
 }

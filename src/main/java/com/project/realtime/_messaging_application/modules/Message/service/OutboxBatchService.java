@@ -1,3 +1,4 @@
+
 package com.project.realtime._messaging_application.modules.Message.service;
 
 import com.project.realtime._messaging_application.modules.Message.repository.MessageOutboxRepository;
@@ -27,7 +28,7 @@ public class OutboxBatchService {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxBatchService.class);
 
-    private static final int MAX_FLUSH_BATCH_SIZE = 1000;
+    private static final int MAX_FLUSH_BATCH_SIZE = 2000;
 
     private final MessageOutboxRepository outboxRepo;
     private final ConcurrentLinkedQueue<Long> pendingQueue = new ConcurrentLinkedQueue<>();
@@ -47,32 +48,31 @@ public class OutboxBatchService {
     }
 
     /**
-     * Định kỳ mỗi 2 giây gom và flush hàng loạt xuống PostgreSQL.
-     * Quy tắc an toàn: Chu kỳ flush 2s << Ngưỡng Poller bốc (10s).
+     * Định kỳ mỗi 500ms gom và flush toàn bộ queue xuống PostgreSQL theo từng lô MAX_FLUSH_BATCH_SIZE.
+     * Dùng vòng lặp drain sạch pendingQueue để đảm bảo throughput không bị nghẽn ở 500 msg/s,
+     * ngăn chặn tin PENDING vượt ngưỡng 10s kích hoạt OutboxPoller giả lập cứu hộ.
      */
-    @Scheduled(fixedDelay = 2000)
+    @Scheduled(fixedDelay = 500)
     public void flushBatch() {
-        if (pendingQueue.isEmpty()) {
-            return;
-        }
+        while (!pendingQueue.isEmpty()) {
+            List<Long> batch = new ArrayList<>(Math.min(pendingQueue.size(), MAX_FLUSH_BATCH_SIZE));
+            Long id;
+            while (batch.size() < MAX_FLUSH_BATCH_SIZE && (id = pendingQueue.poll()) != null) {
+                batch.add(id);
+            }
 
-        List<Long> batch = new ArrayList<>(Math.min(pendingQueue.size(), MAX_FLUSH_BATCH_SIZE));
-        Long id;
-        while (batch.size() < MAX_FLUSH_BATCH_SIZE && (id = pendingQueue.poll()) != null) {
-            batch.add(id);
-        }
+            if (batch.isEmpty()) {
+                break;
+            }
 
-        if (batch.isEmpty()) {
-            return;
-        }
-
-        try {
-            int updated = outboxRepo.markAllDoneByMessageIds(batch);
-            log.debug("[OutboxBatch] Flushed batch of {} messageIds to DONE (affected rows: {})",
-                    batch.size(), updated);
-        } catch (Exception e) {
-            log.warn("[OutboxBatch] Failed to batch update outbox DONE: {}", e.getMessage());
-            // Poller sau 10s sẽ làm lưới an toàn rescue nếu có lỗi
+            try {
+                int deleted = outboxRepo.deleteAllByMessageIds(batch);
+                log.debug("[OutboxBatch] Delete-on-success flushed batch of {} messageIds (deleted rows: {})",
+                        batch.size(), deleted);
+            } catch (Exception e) {
+                log.warn("[OutboxBatch] Failed to batch delete outbox records: {}", e.getMessage());
+                break;
+            }
         }
     }
 

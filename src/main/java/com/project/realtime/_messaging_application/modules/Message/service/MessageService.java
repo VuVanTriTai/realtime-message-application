@@ -44,6 +44,8 @@ public class MessageService {
     private final UserRepository userRepo;
     private final MessageOutboxRepository outboxRepo;
     private final ObjectMapper objectMapper;
+    private final RedisMessagePublisher redisPublisher;
+    private final OutboxBatchService outboxBatchService;
     // Metrics
     private final Counter messagesSentCounter;
     private final Timer   messageLatencyTimer;
@@ -54,6 +56,8 @@ public class MessageService {
             UserRepository userRepo,
             MessageOutboxRepository outboxRepo,
             ObjectMapper objectMapper,
+            RedisMessagePublisher redisPublisher,
+            OutboxBatchService outboxBatchService,
             Counter messagesSentCounter,
             Timer messageLatencyTimer) {
         this.messageRepo          = messageRepo;
@@ -62,6 +66,8 @@ public class MessageService {
         this.userRepo             = userRepo;
         this.outboxRepo           = outboxRepo;
         this.objectMapper         = objectMapper;
+        this.redisPublisher       = redisPublisher;
+        this.outboxBatchService   = outboxBatchService;
         this.messagesSentCounter  = messagesSentCounter;
         this.messageLatencyTimer  = messageLatencyTimer;
     }
@@ -238,6 +244,14 @@ public class MessageService {
             log.warn("Không thể serialize edited message cho outbox: {}", e.getMessage());
         }
 
+        // Fast-path: Broadcast update qua Redis Pub/Sub ngay lập tức
+        try {
+            redisPublisher.publish(m.getConversation().getId(), RedisEventType.NEW_MESSAGE, response);
+            outboxBatchService.enqueueDone(m.getId());
+        } catch (Exception e) {
+            log.warn("Không thể publish edited message qua Redis: {}", e.getMessage());
+        }
+
         return response;
     }
 
@@ -263,17 +277,25 @@ public class MessageService {
         } catch (JsonProcessingException e) {
             log.warn("Không thể serialize deleted message cho outbox: {}", e.getMessage());
         }
+
+        // Fast-path: Broadcast tin thu hồi qua Redis Pub/Sub ngay lập tức cho toàn bộ phòng chat
+        try {
+            redisPublisher.publish(m.getConversation().getId(), RedisEventType.NEW_MESSAGE, response);
+            outboxBatchService.enqueueDone(m.getId());
+        } catch (Exception e) {
+            log.warn("Không thể publish deleted message qua Redis: {}", e.getMessage());
+        }
     }
 
     /**
-     * Fast Path: Đánh dấu DONE cho bản ghi outbox sau khi đã publish thành công qua Redis.
+     * Fast Path: Xóa bản ghi outbox sau khi đã publish thành công qua Redis (Delete-on-success).
      */
     @Transactional
     public void markOutboxDone(Long messageId) {
         try {
-            outboxRepo.markDoneByMessageId(messageId);
+            outboxRepo.deleteByMessageId(messageId);
         } catch (Exception e) {
-            log.warn("Khong the danh dau outbox DONE cho msgId={}: {}", messageId, e.getMessage());
+            log.warn("Khong the xoa outbox record cho msgId={}: {}", messageId, e.getMessage());
         }
     }
 

@@ -137,6 +137,33 @@ export default function ChatPage({ activeConv, setActiveConv }) {
         );
       } else if (event?.type === 'LEFT' && event.conversationId) {
         handleLeaveGroup(event.conversationId);
+      } else if (event?.type === 'INBOX_MESSAGE' && event.conversationId) {
+        // [SINGLE INBOX CHANNEL] Nhận update preview và badge từ kênh cá nhân /topic/user.{userId}
+        const convId = event.conversationId;
+        const lastMsg = event.lastMessage;
+        setConversations((prev) => {
+          const index = prev.findIndex((c) => c.id === convId);
+          if (index === -1) {
+            loadConversations();
+            return prev;
+          }
+          const conv = prev[index];
+          // Chống cộng 2 lần (Dedupe): Nếu đã xử lý tin nhắn này rồi thì bỏ qua
+          if (lastMsg?.id && conv.lastMessage?.id === lastMsg.id) {
+            return prev;
+          }
+
+          const updatedConv = {
+            ...conv,
+            lastMessage: lastMsg || conv.lastMessage,
+            unreadCount: (activeConvRef.current?.id === convId)
+              ? 0
+              : (conv.unreadCount || 0) + (event.unreadCount || 0),
+          };
+          const copy = [...prev];
+          copy.splice(index, 1);
+          return [updatedConv, ...copy];
+        });
       }
     });
 
@@ -152,13 +179,14 @@ export default function ChatPage({ activeConv, setActiveConv }) {
     const currentConv = conversationsRef.current.find((c) => c.id === msg.conversationId);
     const isFromOther = msg.sender?.id !== currentUser?.id;
     const isNotActiveConv = activeConvRef.current?.id !== msg.conversationId;
+    const isDeletedMsg = !!msg.isDeleted || !!msg.deleted;
 
-    // Bắn ACK Delivered khi thiết bị nhận được tin nhắn từ người khác
-    if (isFromOther && msg.seq) {
+    // Bắn ACK Delivered khi thiết bị nhận được tin nhắn từ người khác (chỉ khi không phải tin xoá)
+    if (isFromOther && msg.seq && !isDeletedMsg) {
       sendDelivered(msg.conversationId, msg.seq);
     }
 
-    if (currentConv && isFromOther && (document.hidden || isNotActiveConv)) {
+    if (currentConv && isFromOther && !isDeletedMsg && (document.hidden || isNotActiveConv)) {
       showNotification(msg, currentConv, () => {
         setActiveConv({ ...currentConv });
       });
@@ -173,32 +201,46 @@ export default function ChatPage({ activeConv, setActiveConv }) {
       }
 
       const conv = prev[index];
+      // Chống cộng 2 lần (Dedupe): Nếu tin nhắn này đã được cập nhật bởi INBOX_MESSAGE rồi thì bỏ qua
+      if (msg.id && conv.lastMessage?.id === msg.id && !isDeletedMsg) {
+        return prev;
+      }
+
       const isDirect = conv.type === 'DIRECT';
-      const senderAvatar = msg.sender?.avatarUrl;
-      const newAvatarUrl = (isDirect && msg.sender?.id === conv.otherUserId && senderAvatar)
-        ? senderAvatar
+      const isFromOtherUser = isDirect && conv.otherUserId != null && msg.sender?.id != null && Number(msg.sender.id) === Number(conv.otherUserId);
+      const newAvatarUrl = (isFromOtherUser && msg.sender?.avatarUrl)
+        ? msg.sender.avatarUrl
         : conv.avatarUrl;
 
-      // Cập nhật luôn activeConv nếu đang mở cuộc trò chuyện này
-      if (activeConvRef.current?.id === conv.id && isDirect && senderAvatar) {
-        setActiveConv((prevActive) => (prevActive ? { ...prevActive, avatarUrl: senderAvatar } : prevActive));
+      // Chỉ cập nhật avatarUrl nếu tin nhắn đến từ chính người kia (otherUser)
+      if (activeConvRef.current?.id === conv.id && isFromOtherUser && msg.sender?.avatarUrl) {
+        setActiveConv((prevActive) => (prevActive ? { ...prevActive, avatarUrl: msg.sender.avatarUrl } : prevActive));
       }
+
+      // Nếu là sự kiện xoá tin, chỉ cập nhật lastMessage nếu tin bị xoá chính là lastMessage hiện tại (hoặc chưa có)
+      const isCurrentLastMsg = !conv.lastMessage || conv.lastMessage.id === msg.id;
+      const newLastMessage = (!isDeletedMsg || isCurrentLastMsg)
+        ? {
+            id: msg.id,
+            content: isDeletedMsg ? null : msg.content,
+            type: msg.type,
+            fileName: msg.fileName,
+            senderId: msg.sender?.id ?? conv.lastMessage?.senderId,
+            senderName: msg.sender?.displayName || msg.sender?.username || conv.lastMessage?.senderName,
+            senderUsername: msg.sender?.username || conv.lastMessage?.senderUsername,
+            createdAt: msg.createdAt || conv.lastMessage?.createdAt,
+            deleted: isDeletedMsg,
+            isDeleted: isDeletedMsg,
+          }
+        : conv.lastMessage;
 
       const updatedConv = {
         ...conv,
         avatarUrl: newAvatarUrl,
-        lastMessage: {
-          id: msg.id,
-          content: msg.content,
-          type: msg.type,
-          fileName: msg.fileName,
-          senderId: msg.sender?.id,
-          senderName: msg.sender?.displayName || msg.sender?.username,
-          senderUsername: msg.sender?.username,
-          createdAt: msg.createdAt,
-          deleted: msg.isDeleted,
-        },
-        unreadCount: activeConvRef.current?.id === conv.id ? 0 : (conv.unreadCount || 0) + 1,
+        lastMessage: newLastMessage,
+        unreadCount: (activeConvRef.current?.id === conv.id || isDeletedMsg)
+          ? (activeConvRef.current?.id === conv.id ? 0 : (conv.unreadCount || 0))
+          : (conv.unreadCount || 0) + 1,
       };
 
       const copy = [...prev];

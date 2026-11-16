@@ -5,6 +5,7 @@ import SidebarNav from './components/layout/SidebarNav';
 import ChatPage from './components/chat/ChatPage';
 import FriendsPage from './components/friends/FriendsPage';
 import ProfilePage from './components/profile/ProfilePage';
+import AdminPage from './components/admin/AdminPage';
 import JoinGroupPage from './components/chat/JoinGroupPage';
 import { friendApi } from './api/friendApi';
 import { Loader2 } from 'lucide-react';
@@ -132,6 +133,10 @@ export default function App() {
 
         {activeTab === 'profile' && (
           <ProfilePage />
+        )}
+
+        {activeTab === 'admin' && (
+          <AdminPage />
         )}
       </main>
     </div>

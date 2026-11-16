@@ -302,6 +302,93 @@
     </div>
   </div>
 
+  <div class="section-title">4. 4-Stage Pipeline Timers (Server Internal Latency Breakdown)</div>
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Stage 1: Inbound → DB</div>
+      <div class="card-value">
+        <span id="stage1Avg">--</span>
+        <span class="card-unit">ms</span>
+      </div>
+      <div class="card-sub">
+        <span id="stage1Count">Count: --</span>
+        <span id="stage1Max">Max: -- ms</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Stage 2: DB → Redis Publish</div>
+      <div class="card-value">
+        <span id="stage2Avg">--</span>
+        <span class="card-unit">ms</span>
+      </div>
+      <div class="card-sub">
+        <span id="stage2Count">Count: --</span>
+        <span id="stage2Max">Max: -- ms</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Stage 3: Redis Transit</div>
+      <div class="card-value">
+        <span id="stage3Avg">--</span>
+        <span class="card-unit">ms</span>
+      </div>
+      <div class="card-sub">
+        <span id="stage3Count">Count: --</span>
+        <span id="stage3Max">Max: -- ms</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Stage 4: Consumer → Sockets</div>
+      <div class="card-value">
+        <span id="stage4Avg">--</span>
+        <span class="card-unit">ms</span>
+      </div>
+      <div class="card-sub">
+        <span id="stage4Count">Count: --</span>
+        <span id="stage4Max">Max: -- ms</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">5. Bottlenecks & Backpressure (Giám sát Nghẽn & Dữ liệu Kẹt)</div>
+  <div class="grid">
+    <div class="card">
+      <div class="card-title">Outbox Rescue Delay</div>
+      <div class="card-value">
+        <span id="outboxDelayAvg">--</span>
+        <span class="card-unit">ms</span>
+      </div>
+      <div class="card-sub">
+        <span>Độ trễ tin kẹt trong Outbox</span>
+        <span id="outboxDelayMax">Max: -- ms</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">WebSocket Disconnections</div>
+      <div class="card-value" id="slowDisconnects">0</div>
+      <div class="card-sub">
+        <span>Tích lũy (F5, đóng tab, logout)</span>
+        <span id="slowDisconnectsBadge" class="badge-ok">Bình thường</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">End-to-End Processing Latency</div>
+      <div class="card-value">
+        <span id="msgLatencyAvg">--</span>
+        <span class="card-unit">ms</span>
+      </div>
+      <div class="card-sub">
+        <span id="msgLatencyCount">Count: --</span>
+        <span id="msgLatencyMax">Max: -- ms</span>
+      </div>
+    </div>
+  </div>
+
   <script>
     let prevMsgSent = null;
     let prevTimestamp = null;
@@ -453,6 +540,65 @@
           }
         }
 
+        // Helper parse Timer
+        const parseTimer = (data) => {
+          if (!data || !data.measurements) return { avg: "--", count: "--", max: "--" };
+          const count = data.measurements.find(m => m.statistic === "COUNT")?.value || 0;
+          const total = data.measurements.find(m => m.statistic === "TOTAL_TIME")?.value || 0;
+          const max = data.measurements.find(m => m.statistic === "MAX")?.value || 0;
+          return {
+            avg: count > 0 ? (total / count * 1000).toFixed(2) : "0.00",
+            count: Math.round(count).toLocaleString(),
+            max: (max * 1000).toFixed(2)
+          };
+        };
+
+        // 8. 4-Stage Pipeline Timers
+        const s1Data = await fetchMetricFull(host, "chat.stage.inbound_to_db");
+        const s1 = parseTimer(s1Data);
+        document.getElementById("stage1Avg").textContent = s1.avg;
+        document.getElementById("stage1Count").textContent = `Count: ${s1.count}`;
+        document.getElementById("stage1Max").textContent = `Max: ${s1.max} ms`;
+
+        const s2Data = await fetchMetricFull(host, "chat.stage.db_to_redis");
+        const s2 = parseTimer(s2Data);
+        document.getElementById("stage2Avg").textContent = s2.avg;
+        document.getElementById("stage2Count").textContent = `Count: ${s2.count}`;
+        document.getElementById("stage2Max").textContent = `Max: ${s2.max} ms`;
+
+        const s3Data = await fetchMetricFull(host, "chat.stage.redis_transit");
+        const s3 = parseTimer(s3Data);
+        document.getElementById("stage3Avg").textContent = s3.avg;
+        document.getElementById("stage3Count").textContent = `Count: ${s3.count}`;
+        document.getElementById("stage3Max").textContent = `Max: ${s3.max} ms`;
+
+        const s4Data = await fetchMetricFull(host, "chat.stage.consumer_to_socket");
+        const s4 = parseTimer(s4Data);
+        document.getElementById("stage4Avg").textContent = s4.avg;
+        document.getElementById("stage4Count").textContent = `Count: ${s4.count}`;
+        document.getElementById("stage4Max").textContent = `Max: ${s4.max} ms`;
+
+        // 9. Bottlenecks & Backpressure (Outbox Delay, Slow Disconnects, E2E Latency)
+        const outboxData = await fetchMetricFull(host, "chat.outbox.delay");
+        const outbox = parseTimer(outboxData);
+        document.getElementById("outboxDelayAvg").textContent = outbox.avg;
+        document.getElementById("outboxDelayMax").textContent = `Max: ${outbox.max} ms`;
+
+        const disconnects = await fetchMetric(host, "chat.ws.disconnects.total");
+        if (disconnects !== null) {
+          const discVal = Math.round(disconnects);
+          document.getElementById("slowDisconnects").textContent = discVal;
+          const badge = document.getElementById("slowDisconnectsBadge");
+          badge.textContent = "Bình thường (Lifecycle)";
+          badge.className = "badge-ok";
+        }
+
+        const msgLatencyData = await fetchMetricFull(host, "chat.messages.latency");
+        const msgLat = parseTimer(msgLatencyData);
+        document.getElementById("msgLatencyAvg").textContent = msgLat.avg;
+        document.getElementById("msgLatencyCount").textContent = `Count: ${msgLat.count}`;
+        document.getElementById("msgLatencyMax").textContent = `Max: ${msgLat.max} ms`;
+
       } catch (err) {
         console.error("Dashboard refresh error:", err);
       }
@@ -464,4 +610,3 @@
   </script>
 </body>
 </html>
-
