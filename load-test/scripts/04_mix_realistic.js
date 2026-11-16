@@ -113,12 +113,12 @@ export function setup() {
 
   const users = [];
 
-  // Tìm nhóm LargeGroup từ testuser001 (thay vì admin để tránh lỗi login)
+  // Lấy sẵn thông tin nhóm LargeGroup từ tài khoản Admin
   let commonGroupId = null;
-  const firstUserToken = login(formatUsername(1), "LoadTest@123");
-  if (firstUserToken) {
-    const userConvs = getMyConversations(firstUserToken);
-    const lg = userConvs.find((c) => c.name === "LargeGroup") || userConvs.find((c) => c.type === "GROUP");
+  const adminToken = login("admin", "Admin@123") || login("admin", "LoadTest@123") || login(formatUsername(1), "LoadTest@123");
+  if (adminToken) {
+    const adminConvs = getMyConversations(adminToken);
+    const lg = adminConvs.find((c) => c.name === "LargeGroup" || c.name === "Dev Team") || adminConvs.find((c) => c.type === "GROUP");
     if (lg) {
       commonGroupId = lg.id;
       console.log(`==> [Setup] Tìm thấy nhóm chung: ID=${commonGroupId} (${lg.name || "Group"})`);

@@ -95,9 +95,9 @@ export function setup() {
   }
 
   // 1. Đăng nhập Admin (người tạo nhóm và sender)
-  let adminToken = login("admin", "LoadTest@123");
+  let adminToken = login("admin", "Admin@123");
   if (!adminToken) {
-    adminToken = login("admin", "Admin@123");
+    adminToken = login("admin", "LoadTest@123");
   }
   if (!adminToken) {
     throw new Error("Không thể đăng nhập tài khoản admin! Vui lòng kiểm tra seed data.");
